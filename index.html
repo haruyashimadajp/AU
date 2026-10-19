@@ -59,12 +59,12 @@ const E = {
 };
 
 /* ---------- input ---------- */
-const K = {}, P = {};
+const K = {}, KP = {};
 const KEYMAP = {
   ArrowLeft: 'L', KeyA: 'L', ArrowRight: 'R', KeyD: 'R', ArrowUp: 'U', KeyW: 'U', ArrowDown: 'D', KeyS: 'D',
   KeyZ: 'OK', Enter: 'OK', Space: 'OK', KeyX: 'NO', Escape: 'NO', ShiftLeft: 'SLOW', ShiftRight: 'SLOW', KeyC: 'SLOW'
 };
-function setKey(a, down) { if (down && !K[a]) P[a] = true; K[a] = down; }
+function setKey(a, down) { if (down && !K[a]) KP[a] = true; K[a] = down; }
 addEventListener('keydown', e => { const a = KEYMAP[e.code]; if (a) { setKey(a, true); e.preventDefault(); } if (e.code === 'KeyM') Snd.toggle(); else Snd.init(); });
 addEventListener('keyup', e => { const a = KEYMAP[e.code]; if (a) { setKey(a, false); e.preventDefault(); } });
 addEventListener('blur', () => { for (const k in K) K[k] = false; });
@@ -83,10 +83,10 @@ let I = {};
 function readInput() {
   const bot = window.__bot;
   if (bot) { I = bot(); }
-  else I = { l: K.L, r: K.R, u: K.U, d: K.D, slow: K.SLOW, ok: P.OK, no: P.NO, pl: P.L, pr: P.R, pu: P.U, pd: P.D };
+  else I = { l: K.L, r: K.R, u: K.U, d: K.D, slow: K.SLOW, ok: KP.OK, no: KP.NO, pl: KP.L, pr: KP.R, pu: KP.U, pd: KP.D };
   if (window.__press) { for (const k in window.__press) { if (k === 'OK') I.ok = true; if (k === 'NO') I.no = true; if (k === 'L') I.pl = true; if (k === 'R') I.pr = true; if (k === 'U') I.pu = true; if (k === 'D') I.pd = true; } window.__press = null; }
 }
-function clearEdges() { for (const k in P) P[k] = false; }
+function clearEdges() { for (const k in KP) KP[k] = false; }
 
 /* ---------- audio : fully procedural ---------- */
 const Snd = (() => {
@@ -193,108 +193,58 @@ const Snd = (() => {
 })();
 
 /* ============================================================
-   PIXEL ENGINE : 480x270 framebuffer, no anti-aliasing, fixed palette,
-   ordered-dither instead of gradients. Everything on screen is dots.
-   Game logic uses 960x540 "world" coords; draw code halves them.
+   PIXEL SPRITE KIT
+   Every design is drawn dot by dot into a small bitmap. On screen each dot is
+   P x P world pixels, but sprites are placed, moved and rotated on the smooth
+   960x540 world grid (no screen-grid snapping, no blur, no glow haze).
    ============================================================ */
-const LW = 480, LH = 270;
-const low = document.createElement('canvas'); low.width = LW; low.height = LH;
-const lc = low.getContext('2d'); lc.imageSmoothingEnabled = false;
-const fbImg = lc.createImageData(LW, LH);
-const FB = new Uint32Array(fbImg.data.buffer);
-let TB = FB, TW = LW, TH = LH;               // current draw target
+const P = 4;
+let TB = null, TW = 0, TH = 0;                 // current bitmap being painted
 function setTarget(b, w, h) { TB = b; TW = w; TH = h; }
-function resetTarget() { TB = FB; TW = LW; TH = LH; }
 function hex(s) { const n = parseInt(s.slice(1), 16); return ((255 << 24) | ((n & 255) << 16) | (((n >> 8) & 255) << 8) | ((n >> 16) & 255)) >>> 0; }
-const rgbOf = c => [c & 255, (c >> 8) & 255, (c >> 16) & 255];
 const packRGB = (r, g, b) => ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
-const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
-const dith = (x, y, l) => B4[((y & 3) << 2) | (x & 3)] < l * 16;
+const css = c => '#' + [c & 255, (c >> 8) & 255, (c >> 16) & 255].map(v => v.toString(16).padStart(2, '0')).join('');
 
-function px(x, y, c) { x = x | 0; y = y | 0; if (x < 0 || y < 0 || x >= TW || y >= TH) return; TB[y * TW + x] = c; }
-function getpx(x, y) { x = x | 0; y = y | 0; if (x < 0 || y < 0 || x >= TW || y >= TH) return 0; return TB[y * TW + x]; }
-function rectF(x, y, w, h, c) {
-  x = x | 0; y = y | 0; w = w | 0; h = h | 0;
-  const x1 = Math.min(TW, x + w), y1 = Math.min(TH, y + h);
-  for (let j = Math.max(0, y); j < y1; j++) { const o = j * TW; for (let i = Math.max(0, x); i < x1; i++) TB[o + i] = c; }
-}
-function rectS(x, y, w, h, c) { rectF(x, y, w, 1, c); rectF(x, y + h - 1, w, 1, c); rectF(x, y, 1, h, c); rectF(x + w - 1, y, 1, h, c); }
+function px(x, y, c) { x = Math.round(x); y = Math.round(y); if (x < 0 || y < 0 || x >= TW || y >= TH) return; TB[y * TW + x] = c; }
+function rectF(x, y, w, h, c) { for (let j = Math.round(y); j < Math.round(y + h); j++) for (let i = Math.round(x); i < Math.round(x + w); i++) px(i, j, c); }
 function lineP(x0, y0, x1, y1, c) {
   x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
-  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-  let err = dx + dy;
-  for (let n = 0; n < 2000; n++) {
-    px(x0, y0, c); if (x0 === x1 && y0 === y1) break;
-    const e2 = 2 * err; if (e2 >= dy) { err += dy; x0 += sx; } if (e2 <= dx) { err += dx; y0 += sy; }
-  }
-}
-function discF(cx, cy, r, c) {
-  cx = Math.round(cx); cy = Math.round(cy);
-  for (let j = -Math.ceil(r); j <= Math.ceil(r); j++) {
-    const w = Math.floor(Math.sqrt(Math.max(0, r * r + r * .8 - j * j)));
-    for (let i = -w; i <= w; i++) px(cx + i, cy + j, c);
-  }
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1; let err = dx + dy;
+  for (let n = 0; n < 500; n++) { px(x0, y0, c); if (x0 === x1 && y0 === y1) break; const e2 = 2 * err; if (e2 >= dy) { err += dy; x0 += sx; } if (e2 <= dx) { err += dx; y0 += sy; } }
 }
 function ellF(cx, cy, rx, ry, c) {
-  cx = Math.round(cx); cy = Math.round(cy);
-  for (let j = -Math.ceil(ry); j <= Math.ceil(ry); j++) {
-    const u = j / (ry + .5), w = Math.floor(rx * Math.sqrt(Math.max(0, 1 - u * u)) + .5);
-    for (let i = -w; i <= w; i++) px(cx + i, cy + j, c);
+  for (let j = Math.floor(cy - ry - 1); j <= Math.ceil(cy + ry + 1); j++) for (let i = Math.floor(cx - rx - 1); i <= Math.ceil(cx + rx + 1); i++) {
+    const u = (i + .5 - cx - .5) / (rx + .35), v = (j + .5 - cy - .5) / (ry + .35); if (u * u + v * v <= 1) px(i, j, c);
   }
 }
+const discF = (cx, cy, r, c) => ellF(cx, cy, r, r, c);
 function capsuleF(x0, y0, x1, y1, r, c) {
-  const minx = Math.floor(Math.min(x0, x1) - r - 1), maxx = Math.ceil(Math.max(x0, x1) + r + 1);
-  const miny = Math.floor(Math.min(y0, y1) - r - 1), maxy = Math.ceil(Math.max(y0, y1) + r + 1);
   const dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy;
-  for (let j = Math.max(0, miny); j <= Math.min(TH - 1, maxy); j++) for (let i = Math.max(0, minx); i <= Math.min(TW - 1, maxx); i++) {
+  for (let j = Math.floor(Math.min(y0, y1) - r - 1); j <= Math.ceil(Math.max(y0, y1) + r + 1); j++) for (let i = Math.floor(Math.min(x0, x1) - r - 1); i <= Math.ceil(Math.max(x0, x1) + r + 1); i++) {
     let t = l2 ? ((i - x0) * dx + (j - y0) * dy) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
-    const ex = x0 + dx * t - i, ey = y0 + dy * t - j;
-    if (ex * ex + ey * ey <= r * r + .3) TB[j * TW + i] = c;
+    const ex = x0 + dx * t - i, ey = y0 + dy * t - j; if (ex * ex + ey * ey <= r * r + .25) px(i, j, c);
   }
 }
-function polyF(p, c) { // p = [x0,y0,x1,y1,...]
+function polyF(p, c) {
   let minY = 1e9, maxY = -1e9; const n = p.length / 2;
   for (let i = 0; i < n; i++) { minY = Math.min(minY, p[i * 2 + 1]); maxY = Math.max(maxY, p[i * 2 + 1]); }
   for (let y = Math.floor(minY); y <= Math.ceil(maxY); y++) {
     const xs = [], yy = y + .5;
-    for (let i = 0; i < n; i++) {
-      const j = (i + 1) % n, ax = p[i * 2], ay = p[i * 2 + 1], bx = p[j * 2], by = p[j * 2 + 1];
-      if ((ay <= yy && by > yy) || (by <= yy && ay > yy)) xs.push(ax + (yy - ay) / (by - ay) * (bx - ax));
-    }
+    for (let i = 0; i < n; i++) { const j = (i + 1) % n, ax = p[i * 2], ay = p[i * 2 + 1], bx = p[j * 2], by = p[j * 2 + 1]; if ((ay <= yy && by > yy) || (by <= yy && ay > yy)) xs.push(ax + (yy - ay) / (by - ay) * (bx - ax)); }
     xs.sort((a, b) => a - b);
     for (let k = 0; k + 1 < xs.length; k += 2) for (let x = Math.round(xs[k]); x < Math.round(xs[k + 1]); x++) px(x, y, c);
   }
 }
-function glowD(cx, cy, R, c, pw = 1.5, mx = .8) { // dithered glow disc
-  const x0 = Math.max(0, Math.floor(cx - R)), x1 = Math.min(LW - 1, Math.ceil(cx + R)), y0 = Math.max(0, Math.floor(cy - R)), y1 = Math.min(LH - 1, Math.ceil(cy + R));
-  for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) {
-    const d = Math.hypot(i - cx, j - cy); if (d >= R) continue;
-    if (dith(i, j, Math.pow(1 - d / R, pw) * mx)) FB[j * LW + i] = c;
-  }
-}
-const dark2 = c => (((c >>> 1) & 0x7F7F7F) | 0xFF000000) >>> 0;
-const lighten = (c, a) => { const r = c & 255, g = (c >> 8) & 255, b = (c >> 16) & 255; return packRGB(r + ((255 - r) * a) | 0, g + ((255 - g) * a) | 0, b + ((255 - b) * a) | 0); };
-function shadeRect(x0, y0, x1, y1, lvl) { // dithered darkening
-  x0 = Math.max(0, x0 | 0); y0 = Math.max(0, y0 | 0); x1 = Math.min(LW, x1 | 0); y1 = Math.min(LH, y1 | 0);
-  for (let j = y0; j < y1; j++) for (let i = x0; i < x1; i++) if (dith(i, j, lvl)) { const k = j * LW + i; FB[k] = dark2(FB[k]); }
-}
 
-/* ---------- sprites ---------- */
+/* ---------- sprite objects ---------- */
 function mkSpr(w, h) { return { w, h, d: new Uint32Array(w * h) }; }
+function paint(w, h, fn) { const s = mkSpr(w, h); setTarget(s.d, w, h); fn(); return s; }
 function sprFromRows(rows, map) {
   const s = mkSpr(rows[0].length, rows.length);
   rows.forEach((r, y) => { for (let x = 0; x < r.length; x++) { const ch = r[x]; if (ch !== '.' && ch !== ' ') s.d[y * s.w + x] = map[ch] || 0; } });
   return s;
 }
-function blit(s, x, y, flip, dl) {
-  x = Math.round(x); y = Math.round(y);
-  for (let j = 0; j < s.h; j++) for (let i = 0; i < s.w; i++) {
-    const c = s.d[j * s.w + (flip ? s.w - 1 - i : i)]; if (!c) continue;
-    if (dl !== undefined && !dith(x + i, y + j, dl)) continue;
-    px(x + i, y + j, c);
-  }
-}
-function outlineSpr(s, col, keepInner) {
+function outlineSpr(s, col) {
   const o = mkSpr(s.w + 2, s.h + 2);
   for (let j = 0; j < s.h; j++) for (let i = 0; i < s.w; i++) if (s.d[j * s.w + i]) o.d[(j + 1) * o.w + i + 1] = s.d[j * s.w + i];
   const src = o.d.slice();
@@ -304,32 +254,26 @@ function outlineSpr(s, col, keepInner) {
   }
   return o;
 }
-function rotSpr(s, ang, sc = 1) { // nearest-neighbour rotation about sprite centre
-  const R = Math.ceil(Math.hypot(s.w, s.h) * sc / 2) + 1, n = R * 2 + 1, o = mkSpr(n, n);
-  const cs = Math.cos(-ang), sn = Math.sin(-ang), cx = s.w / 2, cy = s.h / 2;
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
-    const dx = (i - R) / sc, dy = (j - R) / sc, sx = Math.floor(dx * cs - dy * sn + cx), sy = Math.floor(dx * sn + dy * cs + cy);
-    if (sx >= 0 && sy >= 0 && sx < s.w && sy < s.h) o.d[j * n + i] = s.d[sy * s.w + sx];
-  }
-  return o;
+function flipV(s) { const o = mkSpr(s.w, s.h); for (let j = 0; j < s.h; j++) for (let i = 0; i < s.w; i++) o.d[j * s.w + i] = s.d[(s.h - 1 - j) * s.w + i]; return o; }
+function sprCanvas(s) {
+  if (s.cv) return s.cv;
+  const c = document.createElement('canvas'); c.width = s.w; c.height = s.h;
+  const g = c.getContext('2d'), im = g.createImageData(s.w, s.h); new Uint32Array(im.data.buffer).set(s.d); g.putImageData(im, 0, 0);
+  return s.cv = c;
 }
-function newSprTarget(w, h) { const s = mkSpr(w, h); setTarget(s.d, w, h); return s; }
 
 /* ---------- palette ---------- */
 const PL = {
-  ink: hex('#070a1c'), ink2: hex('#0d1432'), white: hex('#ffffff'), yellow: hex('#ffe566'), grey: hex('#6f86b0'), red: hex('#ff2a4a'), blue: hex('#2a7bff'),
-  bone: hex('#f4f8ff'), bone2: hex('#c4d2ee'), bone3: hex('#8a9cc4'), crack: hex('#7f93bd'),
+  ink: hex('#070a1c'), ink2: hex('#0d1432'), white: hex('#ffffff'), yellow: hex('#ffe566'), red: hex('#ff2a4a'), red2: hex('#b0102c'), blue: hex('#2a7bff'), blue2: hex('#1240a8'),
+  bone: hex('#f4f8ff'), bone2: hex('#c4d2ee'), bone3: hex('#8a9cc4'), crack: hex('#6f84b0'),
   coat0: hex('#101f4c'), coat1: hex('#1d3678'), coat2: hex('#2f58b8'), coat3: hex('#5c8de6'),
   teal: hex('#27c4bd'), teal2: hex('#8ff3e6'),
   scarf0: hex('#b23f14'), scarf1: hex('#ff8a3a'), scarf2: hex('#ffc27a'),
   gold: hex('#ffd05a'), gold2: hex('#c98f1e'), pink: hex('#f28bb8'), pink2: hex('#c05a8a'),
-  wood0: hex('#4a2f22'), wood1: hex('#8a5a3a'), wood2: hex('#b07a4c'),
-  fur: hex('#ffffff'), fur2: hex('#dfe8ff'),
-  moon0: hex('#f6fcff'), moon1: hex('#cfe4f6'), moon2: hex('#a9c6e4'),
-  box: hex('#030716'), boxw: hex('#0a2850'), foam: hex('#9fe4ff'), sea: hex('#0e4a86')
+  wood0: hex('#4a2f22'), wood1: hex('#8a5a3a'), wood2: hex('#b07a4c'), rope: hex('#c9a56a'),
+  fur: hex('#ffffff'), fur2: hex('#d6e2fa'),
+  moon0: hex('#f6fcff'), moon1: hex('#cfe4f6'), moon2: hex('#a9c6e4')
 };
-const SKY = ['#02040f', '#050b22', '#091634', '#0e2650', '#143a72', '#1e5290'].map(hex);
-const SEA = ['#0f4a86', '#0c3c72', '#092e5a', '#062146', '#041634', '#020c20'].map(hex);
 const RAMPS = {
   cyan: ['#0a3f78', '#1e86d0', '#56d4f4', '#c4f6ff', '#ffffff'], blue: ['#0b2272', '#2a52e0', '#6f92ff', '#c9d6ff', '#ffffff'],
   violet: ['#3a1670', '#7b3fd0', '#b987f5', '#ead6ff', '#ffffff'], pink: ['#6a1458', '#c4399a', '#ff7fd0', '#ffd0f0', '#ffffff'],
@@ -337,238 +281,165 @@ const RAMPS = {
   green: ['#0a4a3a', '#1fa886', '#5ff0c0', '#c8ffe8', '#ffffff'], white: ['#4a5882', '#a8b8de', '#e4ecff', '#ffffff', '#ffffff'],
   deep: ['#061a44', '#0f3a8a', '#2468c8', '#7fb0f0', '#d6e8ff']
 };
-for (const k in RAMPS) RAMPS[k] = RAMPS[k].map(hex);
-function rampOf(h) {
+const RAMPC = {}; for (const k in RAMPS) { RAMPC[k] = RAMPS[k].slice(); RAMPS[k] = RAMPS[k].map(hex); }
+function rampKey(h) {
   h = ((h % 360) + 360) % 360;
-  if (h >= 345 || h < 12) return RAMPS.red; if (h < 80) return RAMPS.gold; if (h < 165) return RAMPS.green; if (h < 215) return RAMPS.cyan;
-  if (h < 252) return RAMPS.blue; if (h < 288) return RAMPS.violet; return RAMPS.pink;
+  if (h >= 345 || h < 12) return 'red'; if (h < 80) return 'gold'; if (h < 165) return 'green'; if (h < 215) return 'cyan';
+  if (h < 252) return 'blue'; if (h < 288) return 'violet'; return 'pink';
 }
+const rampOf = h => RAMPS[rampKey(h)];
+const rampCss = h => RAMPC[rampKey(h)];
 
-/* orb / heart / moth sprites */
-const orbCache = {};
-function orbSpr(h, rl) {
-  const k = ((h / 6) | 0) + '_' + rl; if (orbCache[k]) return orbCache[k];
-  const rp = rampOf(h), r = rl, n = r * 2 + 1, s = mkSpr(n, n);
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
-    const d = Math.hypot(i - r, j - r); let c = 0;
-    if (d <= .75) c = rp[4]; else if (d <= 1.55 && r >= 2) c = rp[3]; else if (d <= r - .35 || (r <= 1 && d <= 1.1)) c = rp[2]; else if (d <= r + .55) c = rp[1];
-    s.d[j * n + i] = c;
-  }
-  return orbCache[k] = s;
-}
-const HEART = ['.XX...XX.', 'XHXX.XXXX', 'XXXXXXXXX', 'XXXXXXXXX', '.XXXXXXX.', '..XXXXX..', '...XXX...', '....X....'];
+/* ---------- small designs ---------- */
 const heartCache = {};
-function heartSpr(col, hi) { const k = col + '_' + hi; return heartCache[k] || (heartCache[k] = sprFromRows(HEART, { X: col, H: hi || col })); }
-const MOTH = [
-  ['W.....W', 'WW.B.WW', '.WWBWW.', '..WBW..', '...B...'],
-  ['.......', 'W.WBW.W', 'WWWBWWW', '.WWBWW.', '..W.W..']
-];
+function heartSpr(kind) { // 'red' | 'blue' | 'mirror'
+  if (heartCache[kind]) return heartCache[kind];
+  const m = kind === 'blue' ? { X: PL.blue, D: PL.blue2, H: hex('#cfe0ff') } : kind === 'mirror' ? { X: RAMPS.deep[3], D: RAMPS.deep[2], H: PL.white } : { X: PL.red, D: PL.red2, H: hex('#ffd0d8') };
+  let s = sprFromRows(['.XX.XX.', 'XHXXXXX', 'XXXXXXX', '.XXXXD.', '..XXD..', '...D...'], m);
+  if (kind === 'mirror') s = flipV(s);
+  return heartCache[kind] = s;
+}
+const orbCache = {};
+function orbSize(r) { return r <= 4 ? 3 : r <= 6 ? 4 : 5; }
+function orbSpr(h, n) {
+  const k = rampKey(h) + n; if (orbCache[k]) return orbCache[k];
+  const rp = rampOf(h), m = { a: rp[1], b: rp[2], c: rp[3], W: PL.white };
+  const T = { 3: ['aba', 'bWb', 'aba'], 4: ['.bb.', 'bcWb', 'bWcb', '.bb.'], 5: ['.aba.', 'abcba', 'bcWcb', 'abcba', '.aba.'] }[n];
+  return orbCache[k] = sprFromRows(T, m);
+}
+const MOTH = [['W.....W', 'WW.B.WW', '.WWBWW.', '..WBW..', '...B...'], ['.......', 'W.WBW.W', 'WWWBWWW', '.WWBWW.', '..W.W..']];
 const mothCache = {};
-function mothSpr(f, hue) {
-  const k = f + '_' + ((hue / 12) | 0); if (mothCache[k]) return mothCache[k];
-  const rp = rampOf(hue);
-  return mothCache[k] = sprFromRows(MOTH[f], { W: rp[3], B: PL.ink2 });
-}
-const LANT = ['..yy..', '.yggy.', 'ygGGgy', 'ygGGgy', 'ygGGgy', '.yggy.', '..yy..'];
-const lantSpr = sprFromRows(LANT, { y: PL.gold2, g: PL.gold, G: hex('#fff6c8') });
-
-/* ---------- static background ---------- */
-const BG0 = new Uint32Array(LW * LH);
-const STARS = []; (function () { let s = 7; const r = () => (s = (s * 16807) % 2147483647) / 2147483647; for (let i = 0; i < 90; i++) STARS.push({ x: (r() * LW) | 0, y: (r() * 126) | 0, f: .5 + r() * 1.5, p: r() * 6, b: r() < .14 }); })();
-const MOTES = []; (function () { let s = 11; const r = () => (s = (s * 16807) % 2147483647) / 2147483647; for (let i = 0; i < 46; i++) MOTES.push({ x: r() * LW, y: r() * LH, vy: .07 + r() * .16, ph: r() * 6, c: r() < .5 }); })();
-const MX = 240, MY = 74, MR = 48, HORIZON = 131;
-(function buildBG() {
-  setTarget(BG0, LW, LH);
-  for (let y = 0; y < HORIZON; y++) for (let x = 0; x < LW; x++) {
-    const f = y / (HORIZON - 1) * (SKY.length - 1), i = Math.min(SKY.length - 2, f | 0), fr = f - i;
-    BG0[y * LW + x] = SKY[i + (dith(x, y, fr) ? 1 : 0)];
-  }
-  for (let y = HORIZON; y < LH; y++) for (let x = 0; x < LW; x++) {
-    const f = (y - HORIZON) / (LH - HORIZON - 1) * (SEA.length - 1), i = Math.min(SEA.length - 2, f | 0), fr = f - i;
-    BG0[y * LW + x] = SEA[i + (dith(x, y, fr) ? 1 : 0)];
-  }
-  // moon halo
-  for (let j = 0; j < HORIZON; j++) for (let i = MX - 125; i <= MX + 125; i++) {
-    if (i < 0 || i >= LW) continue; const d = Math.hypot(i - MX, j - MY); if (d < 125 && d > MR - 2) { const l = Math.pow(1 - d / 125, 2.0) * .34; if (dith(i, j, l)) BG0[j * LW + i] = hex('#3b7cc0'); }
-  }
-  for (let j = 0; j < HORIZON; j++) for (let i = MX - 70; i <= MX + 70; i++) { const d = Math.hypot(i - MX, j - MY); if (d < 70 && d > MR - 2) { const l = Math.pow(1 - d / 70, 1.6) * .3; if (dith(i + 1, j + 1, l)) BG0[j * LW + i] = hex('#79b4e6'); } }
-  resetTarget();
-})();
-function drawBGpx(t, ecl) {
-  FB.set(BG0);
-  for (const s of STARS) {
-    const a = .5 + .5 * Math.sin(t * .03 * s.f + s.p); if (ecl > .5 && s.y > 40) { }
-    const c = a > .66 ? PL.white : a > .33 ? hex('#9fc0ea') : hex('#4a6a9c');
-    px(s.x, s.y, c); if (s.b && a > .5) { px(s.x - 1, s.y, hex('#4a6a9c')); px(s.x + 1, s.y, hex('#4a6a9c')); px(s.x, s.y - 1, hex('#4a6a9c')); px(s.x, s.y + 1, hex('#4a6a9c')); }
-  }
-  // moon
-  discF(MX, MY, MR, PL.moon0);
-  for (let j = -MR; j <= MR; j++) for (let i = -MR; i <= MR; i++) { if (i * i + j * j > MR * MR) continue; const sh = (i * .7 + j * .7) / MR; if (sh > .52 && dith(MX + i, MY + j, .9)) px(MX + i, MY + j, PL.moon1); else if (sh > .72) px(MX + i, MY + j, PL.moon2); }
-  for (const [cx, cy, r] of [[-15, -10, 5], [14, 11, 6], [-4, 22, 3], [20, -17, 3], [-24, 13, 2]]) { discF(MX + cx, MY + cy, r, PL.moon1); discF(MX + cx - 1, MY + cy - 1, Math.max(1, r - 2), PL.moon0); }
-  if (ecl > .002) {
-    const ox = Math.round((1 - ecl) * 115);
-    discF(MX + ox, MY, MR + 2, hex('#02040d'));
-    if (ecl > .8) {
-      const a = Math.min(1, (ecl - .8) * 5);
-      for (let j = -MR - 14; j <= MR + 14; j++) for (let i = -MR - 14; i <= MR + 14; i++) {
-        const d = Math.hypot(i, j); if (d > MR + 1 && d < MR + 14) { const l = Math.pow(1 - (d - MR - 1) / 13, 1.5) * a; if (dith(MX + i, MY + j, l)) px(MX + i, MY + j, d < MR + 4 ? PL.white : hex('#ffe7a8')); }
-      }
-    }
-    shadeRect(0, 0, LW, HORIZON, ecl * .55);
-  }
-  // sea: reflection + wave lines
-  for (let i = 0; i < 32; i++) {
-    const y = HORIZON + 2 + i * 4, w = Math.max(0, (46 - i * 1.3 + Math.sin(t * .05 + i) * 6) * (1 - ecl * .85)) | 0, cx = MX + Math.round(Math.sin(t * .035 + i * .8) * (3 + i * .3));
-    if (w < 2) continue; const c = i < 8 ? hex('#cfe9ff') : i < 18 ? hex('#7fb0e0') : hex('#3a6aa8');
-    for (let x = -w >> 1; x < w >> 1; x++) if (dith(cx + x, y, .85)) px(cx + x, y, c);
-  }
-  for (let k = 0; k < 6; k++) {
-    const base = HORIZON + 12 + k * 21, c = k < 2 ? hex('#2a6ab0') : hex('#1a4a88');
-    for (let x = 0; x < LW; x++) { const y = base + Math.round(Math.sin(x * .05 + t * .02 * (1 + k * .15) + k) * (1.4 + k * .6)); if (((x + k * 5) & 7) < 5) px(x, y, c); }
-  }
-  for (const m of MOTES) {
-    m.y -= m.vy; m.x += Math.sin(t * .02 + m.ph) * .15; if (m.y < -4) { m.y = LH + 4; m.x = Math.random() * LW; }
-    const a = Math.sin(t * .04 + m.ph); if (a > -.2) px(m.x, m.y, a > .5 ? hex('#9fe4ff') : hex('#3a8ad0'));
-  }
+function mothSpr(f, hue) { const k = f + rampKey(hue); return mothCache[k] || (mothCache[k] = sprFromRows(MOTH[f], { W: rampOf(hue)[3], B: PL.ink2 })); }
+const lantSpr = sprFromRows(['.yy.', 'yGGy', 'gGGg', 'yggy', '.yy.'], { y: PL.gold2, g: PL.gold, G: hex('#fff6c8') });
+const discCache = {};
+function discSpr(r, col) { const k = r + '_' + col; return discCache[k] || (discCache[k] = paint(r * 2 + 1, r * 2 + 1, () => discF(r, r, r, col))); }
+const boneCache = {};
+function boneSpr(n, lay) { // horizontal bone n dots long, 4 dots tall
+  n = Math.max(4, n); const k = n + '_' + lay; if (boneCache[k]) return boneCache[k];
+  const c1 = lay === 1 ? RAMPS.deep[3] : PL.bone, c2 = lay === 1 ? RAMPS.deep[2] : PL.bone2, hi = lay === 1 ? RAMPS.deep[4] : PL.white;
+  return boneCache[k] = paint(n, 4, () => {
+    rectF(0, 0, 2, 4, c1); rectF(n - 2, 0, 2, 4, c1); rectF(1, 1, n - 2, 1, hi); rectF(1, 2, n - 2, 1, c2);
+    px(0, 3, c2); px(n - 1, 3, c2);
+  });
 }
 
-/* ---------- Sans : original ferryman design, drawn dot by dot ---------- */
+/* ---------- Sans : hooded ferryman, 48 x 57 dots ---------- */
 const sansCache = {};
 function buildSans(o) {
-  const mood = o.mood || 'idle', arm = o.arm | 0, sc = o.sc | 0, ff = o.ff | 0, fl = o.fl | 0, sl = o.sl | 0;
-  const key = [mood, arm, sc, ff, fl, sl].join('|'); if (sansCache[key]) return sansCache[key];
-  const W_ = 96, H_ = 112, s = newSprTarget(W_, H_), cx = 48;
-  const hy = sl * 3; // head droop when tired
-  // oar : planted beside him, he leans on it
-  rectF(76, 26, 2, 80, PL.wood1); rectF(76, 26, 1, 80, PL.wood2); rectF(74, 22, 6, 4, PL.wood1); rectF(74, 22, 6, 1, PL.wood2);
-  polyF([73, 88, 80, 88, 79, 106, 74, 106], PL.wood0); polyF([74, 89, 79, 89, 78, 105, 75, 105], PL.wood1); lineP(75, 90, 75, 104, PL.wood2);
-  // legs
-  rectF(38, 96, 4, 8, PL.bone); rectF(54, 96, 4, 8, PL.bone); rectF(38, 96, 1, 8, PL.bone2);
-  ellF(37, 106, 6, 3, PL.pink2); ellF(37, 105, 6, 2, PL.pink); ellF(59, 106, 6, 3, PL.pink2); ellF(59, 105, 6, 2, PL.pink);
-  // rolled trousers
-  rectF(33, 86, 30, 11, PL.coat0); rectF(33, 94, 30, 3, PL.coat1); rectF(33, 94, 30, 1, PL.coat2);
-  rectF(33, 87, 2, 7, PL.bone); rectF(61, 87, 2, 7, PL.bone);
-  // coat
-  polyF([34, 58, 62, 58, 69, 91, 27, 91], PL.coat1);
-  polyF([52, 58, 62, 58, 69, 91, 55, 91], PL.coat0);
-  lineP(35, 59, 28, 90, PL.coat3); lineP(36, 60, 30, 90, PL.coat2);
-  rectF(27, 87, 43, 4, PL.coat0);
-  for (let x = 27; x < 70; x++) { const wv = Math.round(Math.sin(x * .6) * .9); px(x, 88 + wv, (x & 3) < 2 ? PL.teal : PL.teal2); }
-  lineP(cx, 64, cx, 86, PL.coat0);
-  for (const y of [66, 73, 80]) { rectF(cx - 1, y, 3, 3, PL.gold); px(cx - 1, y + 2, PL.gold2); px(cx, y + 2, PL.gold2); px(cx + 1, y + 2, PL.gold2); px(cx - 1, y, PL.white); }
-  lineP(31, 74, 37, 77, PL.coat0); lineP(65, 74, 59, 77, PL.coat0);
-  // rope belt + lantern
-  rectF(29, 79, 40, 2, hex('#c9a56a')); px(cx, 79, hex('#8a6a3a')); px(cx + 1, 80, hex('#8a6a3a'));
-  lineP(36, 81, 36, 83, PL.gold2); blit(lantSpr, 33, 83); px(36, 83, PL.gold2);
-  // arms : his right arm (screen left) is the casting arm
-  const sh1 = [34, 62], L_ = 24, th = (95 + (arm / 3) * 140) * Math.PI / 180, ex = sh1[0] + Math.cos(th) * L_, ey = sh1[1] + Math.sin(th) * L_;
-  capsuleF(sh1[0], sh1[1], ex, ey, 4, PL.coat1); capsuleF(sh1[0] - 1, sh1[1], ex - 1, ey, 1.2, PL.coat2);
-  capsuleF(ex, ey, ex + Math.cos(th) * 3, ey + Math.sin(th) * 3, 2.2, PL.teal);
-  discF(ex + Math.cos(th) * 7, ey + Math.sin(th) * 7, 3.4, PL.bone);
-  const hand = [ex + Math.cos(th) * 7, ey + Math.sin(th) * 7];
-  capsuleF(62, 62, 71, 71, 4, PL.coat1); capsuleF(71, 71, 73, 73, 2.2, PL.teal); discF(76, 75, 3.4, PL.bone); rectF(75, 74, 3, 2, PL.bone2);
-  // hood (behind head)
-  ellF(cx, 36, 25, 23, PL.coat1); ellF(cx + 8, 37, 14, 19, PL.coat0);
-  polyF([55, 10, 70, 19, 71, 30, 63, 25, 55, 18], PL.coat1); polyF([58, 14, 69, 21, 69, 28, 63, 24], PL.coat0);
-  ellF(cx, 58, 27, 5, PL.coat1); ellF(cx + 8, 59, 18, 4, PL.coat0);
-  lineP(26, 36, 30, 18, PL.coat3); lineP(27, 38, 25, 52, PL.coat2);
-  // fur ring around face
-  ellF(cx, 38, 22, 19, PL.fur2); ellF(cx - 1, 37, 22, 19, PL.fur);
-  for (let a = 0; a < 360; a += 17) { const r = a * Math.PI / 180, fx = cx + Math.cos(r) * 22, fy = 38 + Math.sin(r) * 19; if (Math.sin(r) < .45) { const bump = (a * 7) % 3; ellF(fx, fy, 1 + (bump === 0 ? 1 : 0), 1 + (bump === 1 ? 1 : 0), PL.fur); } }
-  // skull
-  ellF(cx, 39 + hy, 19, 16, PL.ink2); ellF(cx, 39 + hy, 18, 15, PL.bone2); ellF(cx - 1, 38 + hy, 17, 14, PL.bone);
-  for (let x = 4; x < 12; x++) px(cx + x + 5, 49 + hy - (x >> 2), PL.bone2);
-  // tide-crack through the left eye
-  const cr = [[44, 24], [43, 26], [44, 28], [43, 30], [42, 32], [41, 34]];
-  cr.forEach(p => px(p[0], p[1] + hy, PL.crack)); px(45, 27 + hy, PL.crack); px(42, 29 + hy, PL.crack);
-  // eyes
-  const eye = (ex_, closed) => {
-    if (closed) { for (let i = -4; i <= 4; i++) px(ex_ + i, 39 + hy - ((Math.abs(i) < 3) ? 1 : 0) - (Math.abs(i) < 1 ? 1 : 0), PL.ink); return; }
-    ellF(ex_, 39 + hy, 4.4, 5.4, PL.ink);
-    if (mood === 'tired') { rectF(ex_ - 4, 34 + hy, 9, 4, PL.bone2); lineP(ex_ - 4, 38 + hy, ex_ + 4, 38 + hy, PL.ink); }
-    if (mood !== 'dark') rectF(ex_ - 1, 39 + hy + (mood === 'tired' ? 1 : 0), 2, 2, PL.white);
-  };
-  eye(41, mood === 'closed'); eye(55, mood === 'closed');
-  px(cx, 44 + hy, PL.ink); px(cx, 45 + hy, PL.ink); px(cx - 1, 45 + hy, PL.ink); px(cx + 1, 45 + hy, PL.ink);
-  // grin (with one gold tooth)
-  const mouthY = x => 48 + hy + (mood === 'tired' ? Math.round((1 - Math.pow((x - cx) / 12, 2)) * 1.2) : Math.round((1 - Math.pow((x - cx) / 12, 2)) * 3.4));
-  for (let x = cx - 12; x <= cx + 12; x++) px(x, mouthY(x), PL.ink);
-  if (mood !== 'tired') {
-    for (let x = cx - 11; x <= cx + 11; x++) px(x, mouthY(x) + 4 - (Math.abs(x - cx) > 9 ? 1 : 0), PL.ink);
-    for (let x = cx - 9; x <= cx + 9; x += 3) lineP(x, mouthY(x), x, mouthY(x) + 4, PL.ink);
-    px(cx - 12, mouthY(cx - 12) + 1, PL.ink); px(cx + 12, mouthY(cx + 12) + 1, PL.ink);
-    rectF(cx + 4, mouthY(cx + 4) + 1, 2, 3, PL.gold);
-  } else { px(cx + 18, 37 + hy, hex('#8ee8ff')); px(cx + 18, 38 + hy, hex('#8ee8ff')); px(cx + 17, 39 + hy, hex('#8ee8ff')); }
-  // scarf (sits below the jaw)
-  ellF(cx, 60 + sl, 16, 4.4, PL.scarf0); ellF(cx, 59 + sl, 16, 3.6, PL.scarf1);
-  for (let x = 34; x < 62; x += 4) px(x, 58 + sl, PL.scarf2);
-  ellF(59, 63, 4, 4, PL.scarf0); ellF(58, 62, 3, 3, PL.scarf1);
-  const ph = sc * 1.05;
-  for (let i = 0; i < 26; i++) {
-    const wob = Math.sin(ph + i * .33) * (1 + i * .1), x = 60 + wob, y = 65 + i; const wdt = 4 - (i > 21 ? 1 : 0);
-    rectF(x, y, wdt, 1, PL.scarf1); px(x, y, PL.scarf0); px(x + wdt - 1, y, PL.scarf0); if (i % 6 === 2) rectF(x + 1, y, wdt - 2, 1, PL.scarf2);
-  }
-  for (let i = 0; i < 15; i++) { const wob = Math.sin(ph + 1.4 + i * .4) * (1 + i * .12), x = 53 + wob, y = 66 + i; rectF(x, y, 3, 1, PL.scarf0); px(x + 1, y, PL.scarf1); }
-  resetTarget();
+  const mood = o.mood || 'idle', arm = o.arm | 0, sc = o.sc | 0, sl = o.sl | 0;
+  const key = [mood, arm, sc, sl].join('|'); if (sansCache[key]) return sansCache[key];
+  const cx = 24, hy = sl; let hand;
+  const s = paint(48, 57, () => {
+    // oar
+    rectF(38, 11, 1, 43, PL.wood1); rectF(37, 9, 3, 2, PL.wood1); px(37, 9, PL.wood2);
+    rectF(37, 45, 3, 9, PL.wood1); rectF(37, 45, 1, 9, PL.wood2); rectF(39, 46, 1, 8, PL.wood0);
+    // legs + slippers
+    rectF(19, 48, 2, 4, PL.bone); rectF(27, 48, 2, 4, PL.bone);
+    rectF(16, 52, 6, 2, PL.pink); rectF(16, 53, 6, 1, PL.pink2); rectF(26, 52, 6, 2, PL.pink); rectF(26, 53, 6, 1, PL.pink2);
+    // rolled trousers
+    rectF(17, 43, 15, 5, PL.coat0); rectF(17, 47, 15, 1, PL.coat2); rectF(17, 43, 1, 4, PL.bone); rectF(31, 43, 1, 4, PL.bone);
+    // coat
+    polyF([16, 29, 32, 29, 36, 45, 12, 45], PL.coat1); polyF([27, 29, 32, 29, 36, 45, 29, 45], PL.coat0);
+    lineP(16, 30, 13, 44, PL.coat3);
+    for (let x = 12; x < 36; x++) px(x, 44, (x & 1) ? PL.teal : PL.teal2);
+    for (let x = 13; x < 35; x += 2) px(x, 43, PL.teal);
+    lineP(cx, 32, cx, 42, PL.coat0);
+    for (const y of [33, 36, 39]) { px(cx + 1, y, PL.gold); }
+    // rope belt + small lantern
+    rectF(14, 40, 20, 1, PL.rope); px(cx, 40, PL.wood1);
+    rectF(16, 41, 3, 3, PL.gold); px(17, 42, hex('#fff6c8')); px(16, 41, PL.gold2); px(18, 41, PL.gold2);
+    // casting arm (his right, screen left)
+    const sx = 17, sy = 31, th = (95 + (arm / 3) * 140) * Math.PI / 180, ex = sx + Math.cos(th) * 10, ey = sy + Math.sin(th) * 10;
+    capsuleF(sx, sy, ex, ey, 1.8, PL.coat1); capsuleF(ex, ey, ex + Math.cos(th) * 1.5, ey + Math.sin(th) * 1.5, 1.2, PL.teal);
+    hand = [ex + Math.cos(th) * 3.2, ey + Math.sin(th) * 3.2]; discF(hand[0], hand[1], 1.3, PL.bone);
+    // oar arm
+    capsuleF(31, 31, 35, 35, 1.8, PL.coat1); px(36, 36, PL.teal); rectF(37, 36, 3, 3, PL.bone); px(37, 38, PL.bone2);
+    // hood
+    ellF(cx, 17, 12.5, 11.5, PL.coat1); ellF(cx + 5, 18, 6.5, 9.5, PL.coat0);
+    polyF([27, 4, 35, 8, 36, 15, 32, 12, 27, 8], PL.coat1); polyF([30, 7, 35, 10, 35, 14, 32, 12], PL.coat0);
+    ellF(cx, 29, 13.5, 2.4, PL.coat1); ellF(cx + 5, 29.5, 8, 2, PL.coat0); lineP(13, 17, 15, 9, PL.coat3);
+    // fur ring
+    ellF(cx, 19, 11, 9.5, PL.fur2); ellF(cx - .5, 18.5, 11, 9.5, PL.fur);
+    for (const [fx, fy] of [[13, 15], [15, 10], [19, 8], [24, 8], [29, 8], [33, 10], [35, 15]]) px(fx, fy - 1, PL.fur);
+    // skull
+    ellF(cx, 19.5 + hy, 9.4, 8, PL.ink2); ellF(cx, 19.5 + hy, 8.9, 7.5, PL.bone2); ellF(cx - .5, 19 + hy, 8.4, 7, PL.bone);
+    // crack through the left eye
+    for (const [x, y] of [[22, 12], [21, 13], [22, 14], [21, 15]]) px(x, y + hy, PL.crack);
+    // eyes
+    const eye = (ex_) => {
+      if (mood === 'closed') { px(ex_ - 2, 19 + hy, PL.ink); px(ex_ - 1, 18 + hy, PL.ink); px(ex_, 18 + hy, PL.ink); px(ex_ + 1, 18 + hy, PL.ink); px(ex_ + 2, 19 + hy, PL.ink); return; }
+      rectF(ex_ - 1, 17 + hy, 3, 4, PL.ink); px(ex_ - 2, 18 + hy, PL.ink); px(ex_ + 2, 18 + hy, PL.ink); px(ex_ - 2, 19 + hy, PL.ink); px(ex_ + 2, 19 + hy, PL.ink);
+      if (mood === 'tired') { rectF(ex_ - 2, 17 + hy, 5, 1, PL.bone2); }
+      if (mood !== 'dark') px(ex_, mood === 'tired' ? 19 + hy : 18 + hy, PL.white);
+    };
+    eye(20); eye(28);
+    px(cx, 22 + hy, PL.ink);
+    // grin with one gold tooth
+    if (mood !== 'tired') {
+      for (let x = 18; x <= 30; x++) px(x, (x === 18 || x === 30) ? 23 + hy : 24 + hy, PL.ink);
+      for (let x = 19; x <= 29; x++) px(x, 26 + hy, PL.ink);
+      for (let x = 19; x <= 29; x += 2) px(x, 25 + hy, PL.ink);
+      px(26, 25 + hy, PL.gold);
+    } else { for (let x = 20; x <= 28; x++) px(x, 25 + hy, PL.ink); px(33, 18 + hy, hex('#8ee8ff')); px(33, 19 + hy, hex('#8ee8ff')); }
+    // scarf
+    ellF(cx, 29.5, 8.5, 1.8, PL.scarf0); ellF(cx, 29, 8.5, 1.4, PL.scarf1);
+    for (let x = 18; x < 31; x += 3) px(x, 28, PL.scarf2);
+    rectF(28, 30, 3, 3, PL.scarf0); px(29, 30, PL.scarf1);
+    const ph = sc * 1.05;
+    for (let i = 0; i < 13; i++) { const x = 30 + Math.round(Math.sin(ph + i * .5) * (.5 + i * .12)), y = 33 + i; px(x, y, PL.scarf1); px(x + 1, y, i % 4 === 1 ? PL.scarf2 : PL.scarf1); px(x - 1, y, PL.scarf0); }
+    for (let i = 0; i < 7; i++) { const x = 27 + Math.round(Math.sin(ph + 1.4 + i * .6) * (.4 + i * .15)), y = 33 + i; px(x, y, PL.scarf0); px(x + 1, y, PL.scarf1); }
+  });
   const out = outlineSpr(s, PL.ink);
-  const res = { spr: out, hand: [hand[0] + 1, hand[1] + 1], eyeL: [42, 40 + hy], eyeR: [56, 40 + hy], lantern: [37, 88], ax: cx + 1, ay: 109 };
-  return sansCache[key] = res;
+  return sansCache[key] = { spr: out, hand: [hand[0] + 1, hand[1] + 1], eyeL: [21, 19 + hy], eyeR: [29, 19 + hy], ax: 25, ay: 55 };
 }
 
-/* ---------- Luna : original blaster (moon-bone skull, crescent horns) ---------- */
-const lunaBase = {};
-function lunaBaseSpr(open) {
-  if (lunaBase[open]) return lunaBase[open];
-  const W_ = 112, H_ = 72, s = newSprTarget(W_, H_), cx = 50, cy = 36;
-  const bone = PL.bone, b2 = PL.bone2, b3 = PL.bone3;
-  // fins
-  for (const sg of [-1, 1]) polyF([34, cy + sg * 12, 24, cy + sg * 30, 10, cy + sg * 33, 24, cy + sg * 20], PL.teal);
-  // crescent horns
-  for (const sg of [-1, 1]) {
-    polyF([36, cy + sg * 8, 22, cy + sg * 6, 8, cy + sg * 8, 0, cy + sg * 22, 10, cy + sg * 16, 24, cy + sg * 14, 38, cy + sg * 13], b2);
-    polyF([34, cy + sg * 8, 20, cy + sg * 7, 8, cy + sg * 9, 4, cy + sg * 16, 14, cy + sg * 13, 28, cy + sg * 11], bone);
-    px(2, cy + sg * 21, PL.teal2); px(3, cy + sg * 20, PL.teal2);
-  }
-  // cranium
-  ellF(cx - 2, cy, 24, 18, b3); ellF(cx - 3, cy - 1, 23, 17, b2); ellF(cx - 4, cy - 2, 21, 15, bone);
-  // lower jaw (hinged) : rotate polygon around hinge
-  const hx = 54, hy2 = cy + 8, a = open * .5;
-  const rot = (x, y) => { const dx = x - hx, dy = y - hy2; return [hx + dx * Math.cos(a) - dy * Math.sin(a), hy2 + dx * Math.sin(a) + dy * Math.cos(a)]; };
-  const jaw = [[50, cy + 3], [86, cy + 4], [90, cy + 8], [82, cy + 13], [50, cy + 14]].map(p => rot(p[0], p[1])).flat();
-  polyF(jaw, b2); polyF(jaw.map((v, i) => i % 2 ? v - 1 : v), bone);
-  for (let i = 0; i < 6; i++) { const p0 = rot(58 + i * 5, cy + 4), p1 = rot(60 + i * 5, cy - 1), p2 = rot(62 + i * 5, cy + 4); polyF([p0[0], p0[1], p1[0], p1[1], p2[0], p2[1]], PL.white); }
-  // snout
-  polyF([48, cy - 14, 72, cy - 8, 90, cy, 90, cy + 3, 52, cy + 2], b2); polyF([48, cy - 15, 72, cy - 9, 88, cy - 1, 52, cy], bone);
-  for (let i = 0; i < 6; i++) polyF([58 + i * 5, cy + 2, 60 + i * 5, cy + 7, 62 + i * 5, cy + 2], PL.white);
-  // eyes
-  ellF(cx - 2, cy - 8, 6, 4, PL.ink); ellF(cx - 16, cy - 4, 4, 3, PL.ink);
-  px(cx - 4, cy - 9, PL.teal2); px(cx - 3, cy - 9, PL.teal2); px(cx - 16, cy - 4, PL.teal2);
-  lineP(cx - 10, cy - 15, cx - 7, cy - 9, b3);
-  resetTarget();
-  return lunaBase[open] = s;
-}
-const lunaRot = {};
-function lunaSprite(ang, open, scl) {
-  const a16 = ((Math.round(ang / (TAU / 32)) % 32) + 32) % 32, o = Math.round(open * 4), k = a16 + '_' + o + '_' + scl;
-  if (lunaRot[k]) return lunaRot[k];
-  const r = rotSpr(lunaBaseSpr(o), a16 * TAU / 32, scl);
-  return lunaRot[k] = outlineSpr(r, PL.ink);
+/* ---------- Luna : original blaster, 56 x 36 dots ---------- */
+const lunaCache = {};
+function lunaSpr(open) {
+  open = Math.round(clamp(open, 0, 1) * 3); if (lunaCache[open]) return lunaCache[open];
+  const cy = 18, b1 = PL.bone, b2 = PL.bone2, b3 = PL.bone3;
+  const s = paint(54, 36, () => {
+    for (const sg of [-1, 1]) polyF([17, cy + sg * 6, 12, cy + sg * 15, 5, cy + sg * 16, 12, cy + sg * 10], PL.teal);
+    for (const sg of [-1, 1]) {
+      polyF([18, cy + sg * 4, 11, cy + sg * 3, 4, cy + sg * 4, 0, cy + sg * 11, 5, cy + sg * 8, 12, cy + sg * 7, 19, cy + sg * 6.5], b2);
+      polyF([17, cy + sg * 4, 10, cy + sg * 3.5, 4, cy + sg * 4.5, 2, cy + sg * 8, 7, cy + sg * 6.5, 14, cy + sg * 5.5], b1);
+      px(1, cy + sg * 10, PL.teal2);
+    }
+    ellF(23, cy, 12, 9, b3); ellF(22.5, cy - .5, 11.5, 8.5, b2); ellF(22, cy - 1, 10.5, 7.5, b1);
+    const a = open / 3 * .5, hx = 27, hy = cy + 4, rot = (x, y) => { const dx = x - hx, dy = y - hy; return [hx + dx * Math.cos(a) - dy * Math.sin(a), hy + dx * Math.sin(a) + dy * Math.cos(a)]; };
+    const jaw = [[25, cy + 1.5], [43, cy + 2], [45, cy + 4], [41, cy + 6.5], [25, cy + 7]].map(p => rot(p[0], p[1])).flat();
+    polyF(jaw, b2); polyF(jaw.map((v, i) => i % 2 ? v - .7 : v), b1);
+    for (let i = 0; i < 4; i++) { const p = rot(30 + i * 3.5, cy + 1); px(p[0], p[1], PL.white); }
+    polyF([24, cy - 7, 36, cy - 4, 45, cy, 45, cy + 1.5, 26, cy + 1], b2); polyF([24, cy - 7.5, 36, cy - 4.5, 44, cy - .5, 26, cy], b1);
+    for (let i = 0; i < 4; i++) px(30 + i * 3.5, cy + 2, PL.white);
+    ellF(22, cy - 4, 3, 2, PL.ink); ellF(15, cy - 2, 2, 1.4, PL.ink);
+    px(21, cy - 5, PL.teal2); px(15, cy - 2, PL.teal2);
+    lineP(18, cy - 8, 20, cy - 5, b3);
+  });
+  return lunaCache[open] = outlineSpr(s, PL.ink);
 }
 
 /* ---------- boat ---------- */
-let boatSpr = null;
+let boatSprC = null;
 function getBoat() {
-  if (boatSpr) return boatSpr;
-  const s = newSprTarget(180, 44);
-  polyF([2, 4, 178, 4, 160, 30, 120, 40, 60, 40, 20, 30], PL.wood0);
-  polyF([6, 5, 174, 5, 157, 28, 118, 37, 62, 37, 23, 28], PL.wood1);
-  for (let y = 10; y < 36; y += 6) lineP(14 + (y - 10) / 2, y, 166 - (y - 10) / 2, y, PL.wood0);
-  for (let x = 14; x < 170; x += 22) { lineP(x, 6, x + 4, 30, PL.wood0); }
-  lineP(2, 4, 178, 4, PL.wood2); lineP(4, 5, 176, 5, PL.wood2);
-  rectF(2, 3, 176, 2, PL.wood2); lineP(2, 3, 178, 3, hex('#d9a870'));
-  resetTarget();
-  return boatSpr = outlineSpr(s, PL.ink);
+  return boatSprC || (boatSprC = outlineSpr(paint(92, 22, () => {
+    polyF([1, 2, 91, 2, 82, 15, 61, 20, 31, 20, 10, 15], PL.wood0);
+    polyF([3, 3, 89, 3, 80, 14, 60, 18, 32, 18, 12, 14], PL.wood1);
+    for (const y of [7, 11, 15]) lineP(8 + (y - 7) / 2, y, 84 - (y - 7) / 2, y, PL.wood0);
+    for (let x = 8; x < 86; x += 11) lineP(x, 3, x + 2, 14, PL.wood0);
+    rectF(1, 1, 90, 2, PL.wood2); rectF(1, 1, 90, 1, hex('#d9a870'));
+  }), PL.ink));
 }
+
+/* ---------- moon ---------- */
+const moonSpr = paint(51, 51, () => {
+  const r = 25;
+  discF(r, r, r, PL.moon0);
+  for (let j = 0; j < 51; j++) for (let i = 0; i < 51; i++) { const dx = i - r, dy = j - r; if (dx * dx + dy * dy > r * r + r * .7) continue; const sh = (dx * .7 + dy * .7) / r; if (sh > .72) px(i, j, PL.moon2); else if (sh > .45) px(i, j, PL.moon1); }
+  for (const [x, y, rr] of [[-8, -5, 3], [7, 6, 3], [-2, 11, 1.5], [10, -9, 1.5], [-12, 7, 1]]) { discF(r + x, r + y, rr, PL.moon1); discF(r + x - .6, r + y - .6, Math.max(.5, rr - 1), PL.moon0); }
+});
+const eclSpr = paint(55, 55, () => discF(27, 27, 27, hex('#02040d')));
+const coronaSpr = paint(77, 77, () => { discF(38, 38, 38, hex('#3a3220')); discF(38, 38, 34, hex('#7a6838')); discF(38, 38, 31, hex('#ffe7a8')); discF(38, 38, 29, PL.white); discF(38, 38, 27, hex('#02040d')); });
 
 /* ============================================================
    STORY / TEXT   (m: mood  closed | dark | tired)
@@ -747,7 +618,7 @@ function burst(x, y, n, speed, hue, life = 40, big = 0) {
 /* ---------- bullets ---------- */
 function orb(x, y, vx, vy, o = {}) {
   const r = o.r || 5;
-  const b = Object.assign({ k: 'orb', x, y, vx: vx * DM.spd, vy: vy * DM.spd, r, hr: r * .82, hue: 190, age: 0, dmg: 6, safe: 6, lay: 2 }, o);
+  const b = Object.assign({ k: 'orb', x, y, vx: vx * DM.spd, vy: vy * DM.spd, r, hr: orbSize(r) * P * .36, hue: 190, age: 0, dmg: 6, safe: 6, lay: 2 }, o);
   if (o.ax) b.ax = o.ax * DM.spd; if (o.ay) b.ay = o.ay * DM.spd;
   bul.push(b); return b;
 }
@@ -759,7 +630,7 @@ function boneV(x, y1, y2, vx, o) { const L = y2 - y1; if (L < 22) return; return
 function boneH(y, x1, x2, vy, o) { const L = x2 - x1; if (L < 22) return; return bone((x1 + x2) / 2, y, 0, L, 0, vy, o); }
 function ring(x, y, n, speed, rot, o) { for (let i = 0; i < n; i++) { const a = rot + i / n * TAU; orb(x, y, Math.cos(a) * speed, Math.sin(a) * speed, o); } }
 function moth(x, y, ang, sp_ = 1.45, hue = 48) {
-  const b = { k: 'moth', x, y, vx: Math.cos(ang) * sp_ * DM.spd, vy: Math.sin(ang) * sp_ * DM.spd, sp: sp_ * DM.spd, hr: 4, hue, age: 0, dmg: 6, safe: 10, lay: 2, ph: rnd(6) };
+  const b = { k: 'moth', x, y, vx: Math.cos(ang) * sp_ * DM.spd, vy: Math.sin(ang) * sp_ * DM.spd, sp: sp_ * DM.spd, hr: 6, hue, age: 0, dmg: 6, safe: 10, lay: 2, ph: rnd(6) };
   bul.push(b); return b;
 }
 function updPending() {
@@ -846,7 +717,7 @@ function lunaAim(x, y, tx, ty, o = {}) {
   return luna(Object.assign({ x, y, a }, o));
 }
 function beamSegs(b) {
-  const mx = b.x + Math.cos(b.a) * 66, my = b.y + Math.sin(b.a) * 66, dx = Math.cos(b.a), dy = Math.sin(b.a), L = 1500;
+  const mx = b.x + Math.cos(b.a) * 72, my = b.y + Math.sin(b.a) * 72, dx = Math.cos(b.a), dy = Math.sin(b.a), L = 1500;
   if (water.on && Math.abs(dy) > .02) {
     const t = (water.y - my) / dy;
     if (t > 2 && t < L) {
@@ -867,7 +738,7 @@ function updBlasters() {
     } else if (b.t <= A1) {
       const u = (b.t - A0) / b.charge; if (b.t === A0 + 1) Snd.charge(b.charge / 60);
       b.ch = E.in(u); b.open = E.out(Math.min(1, u * 1.5));
-      const mx = b.x + Math.cos(b.a) * 66, my = b.y + Math.sin(b.a) * 66;
+      const mx = b.x + Math.cos(b.a) * 72, my = b.y + Math.sin(b.a) * 72;
       if (b.t % 2 === 0) { const a = rnd(TAU), r = rnd(40, 80); sp(mx + Math.cos(a) * r, my + Math.sin(a) * r, -Math.cos(a) * r / 14, -Math.sin(a) * r / 14, { life: 14, hue: b.hue, drag: 1 }); }
     } else if (b.t <= A2) {
       b.firing = true; b.ft = b.t - A1; b.ch = 1; b.open = 1;
@@ -1145,24 +1016,13 @@ ATK[5] = a => {
 /* ============================================================
    TEXT (drawn on the 480x270 canvas with a pixel font, then scaled 2x)
    ============================================================ */
-const TXT = [];
-function T(s, x, y, col = '#fff', size = 16, al = 'left', outline) { TXT.push([s, x, y, col, size, al, outline]); }
-function flushText() {
-  lc.textBaseline = 'alphabetic';
-  for (const [s, x, y, col, size, al, ol] of TXT) {
-    lc.font = size + 'px ' + FONT; lc.textAlign = al;
-    const xx = Math.round(x), yy = Math.round(y), u = size > 16 ? size / 16 : 1;
-    if (ol) { lc.fillStyle = ol; for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [1, 1]]) lc.fillText(s, xx + ox * u, yy + oy * u); }
-    lc.fillStyle = col; lc.fillText(s, xx, yy);
-  }
-  TXT.length = 0;
-}
-function wrapLow(s, maxW, size = 16) {
-  lc.font = size + 'px ' + FONT;
+const mcv = document.createElement('canvas'), mctx = mcv.getContext('2d');
+function wrapLow(s, maxW, size = 32) {
+  mctx.font = size + 'px ' + FONT;
   const out = [];
   for (const para of s.split('\n')) {
     let line = '';
-    for (const ch of para) { if (lc.measureText(line + ch).width > maxW && line && !'。、，．…！？!?」』）)ー〜ぁぃぅぇぉっゃゅょァィゥェォッャュョ'.includes(ch)) { out.push(line); line = ch; } else line += ch; }
+    for (const ch of para) { if (mctx.measureText(line + ch).width > maxW && line && !'。、，．…！？!?」』）)ー〜ぁぃぅぇぉっゃゅょァィゥェォッャュョ'.includes(ch)) { out.push(line); line = ch; } else line += ch; }
     out.push(line);
   }
   return out;
@@ -1178,7 +1038,7 @@ function dlgStart(mode, lines, done) {
 }
 function dlgLoad() {
   const L = Dlg.lines[Dlg.i]; Dlg.cur = L;
-  Dlg.wl = Dlg.mode === 'bubble' ? wrapLow(L.t, 150) : wrapLow(L.t, 352);
+  Dlg.wl = Dlg.mode === 'bubble' ? wrapLow(L.t, 300) : wrapLow(L.t, 700);
   Dlg.flat = Dlg.wl.join(''); Dlg.n = 0; Dlg.acc = 0; Dlg.wait = 0;
   if (Dlg.mode === 'bubble') SN.mood = L.m || 'idle';
 }
@@ -1337,327 +1197,308 @@ function updMenu() {
   }
 }
 
-/* ============================================================
-   RENDER  (everything below writes dots into the framebuffer)
-   ============================================================ */
-const VIG = new Uint8Array(LW * LH);
-(function () { for (let y = 0; y < LH; y++) for (let x = 0; x < LW; x++) { const d = Math.hypot((x - LW / 2) / (LW / 2), (y - LH / 2) / (LH / 2)); VIG[y * LW + x] = d > .78 ? Math.min(255, (d - .78) * 5 * 255) : 0; } })();
-function applyVignette() { for (let i = 0; i < FB.length; i++) { const v = VIG[i]; if (v && dith(i % LW, (i / LW) | 0, v / 255 * .8)) FB[i] = dark2(FB[i]); } }
-function tintRect(x0, y0, x1, y1, col, lvl) { const [r2, g2, b2] = rgbOf(col); for (let j = y0; j < y1; j++) for (let i = x0; i < x1; i++) if (dith(i, j, lvl)) { const k = j * LW + i, c = FB[k]; FB[k] = packRGB(((c & 255) + r2) >> 1, (((c >> 8) & 255) + g2) >> 1, (((c >> 16) & 255) + b2) >> 1); } }
 
-function insideBox(wx, wy, pad) {
-  const dx = wx - box.cx, dy = wy - box.cy, cs = Math.cos(box.rot), sn = Math.sin(box.rot), lx = dx * cs + dy * sn, ly = -dx * sn + dy * cs;
-  const a = Math.max(1, box.hw + pad), b = Math.max(1, box.hh + pad);
-  if (box.n >= 30) return Math.abs(lx) <= a && Math.abs(ly) <= b;
-  return Math.pow(Math.abs(lx / a), box.n) + Math.pow(Math.abs(ly / b), box.n) <= 1;
+/* ============================================================
+   DRAW — smooth 960x540 world. Sprites are pixel-art bitmaps scaled by P
+   (nearest neighbour, never blurred) and placed/rotated freely.
+   No dithered glows: light is drawn as hard-edged rings of dots.
+   ============================================================ */
+function begin() { ctx.setTransform(SC, 0, 0, SC, 0, 0); ctx.imageSmoothingEnabled = false; }
+function spr(s, x, y, o = {}) {
+  const k = o.k || P, c = sprCanvas(s), ax = o.ax === undefined ? s.w / 2 : o.ax, ay = o.ay === undefined ? s.h / 2 : o.ay;
+  if (o.alpha !== undefined) ctx.globalAlpha = clamp(o.alpha, 0, 1);
+  if (o.ang || o.flip) { ctx.save(); ctx.translate(x, y); if (o.ang) ctx.rotate(o.ang); if (o.flip) ctx.scale(-1, 1); ctx.drawImage(c, -ax * k, -ay * k, s.w * k, s.h * k); ctx.restore(); }
+  else ctx.drawImage(c, Math.round(x - ax * k), Math.round(y - ay * k), s.w * k, s.h * k);
+  ctx.globalAlpha = 1;
 }
-function drawBoxPx() {
-  const R = Math.hypot(box.hw, box.hh) + 24, x0 = Math.max(0, ((box.cx - R) / 2) | 0), x1 = Math.min(LW - 1, Math.ceil((box.cx + R) / 2)), y0 = Math.max(0, ((box.cy - R) / 2) | 0), y1 = Math.min(LH - 1, Math.ceil((box.cy + R) / 2));
-  for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) {
-    const wx = i * 2 + 1, wy = j * 2 + 1;
-    if (insideBox(wx, wy, 0)) {
-      if (!insideBox(wx, wy, -4)) { FB[j * LW + i] = PL.white; continue; }
-      let c = PL.box;
-      if (water.on && G.scene === 'attack' && wy > water.y) c = dith(i, j, .5) ? hex('#082a5c') : hex('#06214a');
-      else if ((i * 7 + j * 13) % 29 === 0) c = hex('#0c1a3e');
-      FB[j * LW + i] = c;
-    } else if (insideBox(wx, wy, 10)) { if (dith(i, j, .55)) FB[j * LW + i] = hex('#2a78d0'); }
-    else if (insideBox(wx, wy, 20)) { if (dith(i, j, .22)) FB[j * LW + i] = hex('#1a4c96'); }
+function rect(x, y, w, h, col) { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); }
+function frame4(x, y, w, h, col) { rect(x, y, w, 4, col); rect(x, y + h - 4, w, 4, col); rect(x, y, 4, h, col); rect(x + w - 4, y, 4, h, col); }
+function T(s, x, y, col = '#fff', size = 32, al = 'left', ol) {
+  ctx.font = size + 'px ' + FONT; ctx.textAlign = al; ctx.textBaseline = 'alphabetic';
+  const xx = Math.round(x), yy = Math.round(y);
+  if (ol) { ctx.fillStyle = ol; const u = size / 16; for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [1, 1]]) ctx.fillText(s, xx + ox * u, yy + oy * u); }
+  ctx.fillStyle = col; ctx.fillText(s, xx, yy);
+}
+function rings(x, y, list) { for (const [r, col, a] of list) spr(discSpr(r, hex(col)), x, y, { alpha: a }); } // stepped glow
+
+/* ---------- background ---------- */
+const MOONX = 480, MOONY = 150, HOR = 264;
+const SKYC = ['#02040f', '#050b22', '#091634', '#0e2650', '#143a72', '#1e5290'], SEAC = ['#0f4a86', '#0c3c72', '#092e5a', '#062146', '#041634', '#020c20'];
+const bgSpr = paint(240, 135, () => {
+  const mix = (a, b, t) => { const A = hex(a), B = hex(b); return packRGB(((A & 255) * (1 - t) + (B & 255) * t) | 0, (((A >> 8) & 255) * (1 - t) + ((B >> 8) & 255) * t) | 0, (((A >> 16) & 255) * (1 - t) + ((B >> 16) & 255) * t) | 0); };
+  for (let y = 0; y < 66; y++) for (let x = 0; x < 240; x++) {
+    const band = SKYC[Math.min(5, (y / 66 * 6) | 0)], d = Math.hypot(x + .5 - MOONX / P, y + .5 - MOONY / P);
+    const lv = d < 34 ? .42 : d < 44 ? .26 : d < 58 ? .12 : 0;
+    TB[y * 240 + x] = lv ? mix(band, '#79b4e6', lv) : hex(band);
   }
-}
-function drawWaterLinePx(t) {
-  if (!water.on || G.scene !== 'attack') return;
-  const yy = water.y / 2;
-  for (let x = 0; x < LW; x++) {
-    const inBox = insideBox(x * 2 + 1, water.y, 0);
-    const y = Math.round(yy + Math.sin(x * .09 + t * .06) * 1.2);
-    if (inBox) { px(x, y, PL.foam); px(x, y + 1, hex('#5ab4f0')); if (((x + (t >> 2)) & 7) === 0) px(x, y - 1, PL.white); }
-    else if (((x + (t >> 1)) & 7) < 3) px(x, y, hex('#3a86d0'));
+  for (let y = 66; y < 135; y++) for (let x = 0; x < 240; x++) TB[y * 240 + x] = hex(SEAC[Math.min(5, ((y - 66) / 69 * 6) | 0)]);
+  for (let x = 0; x < 240; x++) px(x, 66, hex('#2a6ab0'));
+});
+const STARS = []; (function () { let s = 7; const r = () => (s = (s * 16807) % 2147483647) / 2147483647; for (let i = 0; i < 70; i++) STARS.push({ x: Math.round(r() * 239) * 4, y: Math.round(r() * 60) * 4, f: .5 + r() * 1.5, p: r() * 6, b: r() < .14 }); })();
+const MOTES = []; (function () { let s = 11; const r = () => (s = (s * 16807) % 2147483647) / 2147483647; for (let i = 0; i < 34; i++) MOTES.push({ x: r() * W, y: r() * H, vy: .14 + r() * .3, ph: r() * 6 }); })();
+function drawBG(t, ecl) {
+  spr(bgSpr, 0, 0, { ax: 0, ay: 0 });
+  for (const s of STARS) {
+    const a = .5 + .5 * Math.sin(t * .03 * s.f + s.p);
+    const col = a > .66 ? '#ffffff' : a > .33 ? '#9fc0ea' : '#4a6a9c'; rect(s.x, s.y, 4, 4, col);
+    if (s.b && a > .5) { rect(s.x - 4, s.y, 4, 4, '#4a6a9c'); rect(s.x + 4, s.y, 4, 4, '#4a6a9c'); rect(s.x, s.y - 4, 4, 4, '#4a6a9c'); rect(s.x, s.y + 4, 4, 4, '#4a6a9c'); }
   }
-}
-function drawWavePx() {
-  const x0 = Math.ceil((box.cx - box.hw) / 2) + 2, x1 = Math.floor((box.cx + box.hw) / 2) - 2, bot = Math.floor((box.cy + box.hh) / 2) - 2;
-  for (let x = x0; x <= x1; x++) {
-    const lx = x * 2 + 1 - box.cx, fy = Math.round((box.cy + waveF(lx, A.f)) / 2), slope = (waveF(lx + 2, A.f) - waveF(lx - 2, A.f));
-    for (let y = fy; y <= bot; y++) {
-      const d = y - fy; let c;
-      if (d === 0) c = PL.white; else if (d === 1) c = PL.foam; else if (d < 4 && dith(x, y, .7)) c = hex('#4aa8ec'); else c = dith(x, y, .5) ? hex('#0f4e9a') : hex('#0a3a78');
-      px(x, y, c);
-    }
-    if (slope < -2.6) px(x, fy - 1, PL.white);
+  spr(moonSpr, MOONX, MOONY);
+  if (ecl > .002) {
+    if (ecl > .8) spr(coronaSpr, MOONX, MOONY, { alpha: (ecl - .8) * 5 });
+    spr(eclSpr, MOONX + (1 - ecl) * 230, MOONY);
+    rect(0, 0, W, HOR, `rgba(0,2,12,${.45 * ecl})`);
   }
+  for (let i = 0; i < 17; i++) { // moon reflection
+    const y = HOR + 8 + i * 8, w = Math.round(Math.max(0, (92 - i * 5 + Math.sin(t * .05 + i) * 12) * (1 - ecl * .85)) / 4) * 4, cx = MOONX + Math.sin(t * .035 + i * .8) * (6 + i);
+    if (w >= 4) rect(cx - w / 2, y, w, 4, i < 5 ? '#cfe9ff' : i < 11 ? '#7fb0e0' : '#3a6aa8');
+  }
+  for (let k = 0; k < 5; k++) { // drifting wave dashes
+    const base = HOR + 24 + k * 44, col = k < 2 ? '#2a6ab0' : '#1a4a88';
+    for (let x = ((t * (.3 + k * .1)) % 32) - 32; x < W; x += 32) rect(x, base + Math.sin(x * .012 + t * .02 + k) * (3 + k * 1.2), 16, 4, col);
+  }
+  for (const m of MOTES) { m.y -= m.vy; m.x += Math.sin(t * .02 + m.ph) * .3; if (m.y < -8) { m.y = H + 8; m.x = Math.random() * W; } if (Math.sin(t * .04 + m.ph) > -.2) rect(m.x, m.y, 4, 4, Math.sin(t * .04 + m.ph) > .5 ? '#9fe4ff' : '#3a8ad0'); }
 }
-function drawBoatPx() {
-  const t = G.t, bob = Math.round(Math.sin(t * .03) * 1), bx = (SN.x / 2) - 91, by = SN.y / 2 - 3 + bob;
-  blit(getBoat(), bx, by);
-  const lx = bx + 14, top = by - 46;
-  rectF(lx, top, 2, 50, PL.wood1); rectF(lx, top, 1, 50, PL.wood2); rectF(lx, top - 1, 12, 2, PL.wood1); rectF(lx + 10, top, 2, 4, PL.wood1);
-  const fl = 1 + Math.sin(t * .31) * .06 + Math.sin(t * .13) * .06, lan = world.lan;
-  glowD(lx + 11, top + 8, 34 * fl * lan, PL.gold, 1.3, .8);
-  glowD(lx + 11, top + 8, 14 * fl * lan, hex('#fff0a8'), 1, .9);
-  blit(lantSpr, lx + 8, top + 4); px(lx + 11, top + 7, PL.white);
+function drawBoat(t) {
+  const bob = Math.sin(t * .03) * 2, bx = SN.x - 188, by = SN.y - 4 + bob;
+  spr(getBoat(), bx, by, { ax: 0, ay: 0 });
+  const lx = bx + 28, top = by - 92;
+  rect(lx, top, 4, 96, css(PL.wood1)); rect(lx, top, 4, 4, css(PL.wood2)); rect(lx, top, 28, 4, css(PL.wood1)); rect(lx + 24, top, 4, 12, css(PL.wood1));
+  const f = 1 + Math.sin(t * .31) * .05, l = world.lan;
+  if (l > .05) rings(lx + 26, top + 24, [[Math.round(6 * f * l), '#6a4a14', .6], [Math.round(4 * f * l), '#c9902a', .8]]);
+  spr(lantSpr, lx + 26, top + 24);
 }
-function drawSansPx() {
-  const t = G.t, a = Math.round(clamp(SN.arm, 0, 3)), sl = Math.round(clamp(SN.slump, 0, 1));
+function drawSans(t) {
+  const a = Math.round(clamp(SN.arm, 0, 3)), sl = Math.round(clamp(SN.slump, 0, 1));
   const res = buildSans({ mood: SN.mood, arm: a, sc: ((t / 6) | 0) % 8, sl });
-  const bob = Math.round(Math.sin(t * .045) * 1), gx = SN.x / 2 - res.ax + (SN.dx / 2), gy = SN.y / 2 - res.ay + bob;
-  if (Math.abs(SN.dx) > 4) for (let i = 3; i <= 9; i += 3) { const h = SN.hist[SN.hist.length - 1 - i]; if (h !== undefined && Math.abs(h - SN.dx) > 4) blit(res.spr, SN.x / 2 - res.ax + h / 2, gy, false, .28); }
-  const dl = SN.alpha < .98 ? SN.alpha : undefined;
-  blit(res.spr, gx, gy, false, dl);
+  const bob = Math.sin(t * .045) * 3, gx = SN.x + SN.dx, gy = SN.y + bob;
+  if (Math.abs(SN.dx) > 4) for (let i = 3; i <= 9; i += 3) { const h = SN.hist[SN.hist.length - 1 - i]; if (h !== undefined && Math.abs(h - SN.dx) > 4) spr(res.spr, SN.x + h, gy, { ax: res.ax, ay: res.ay, alpha: .25 }); }
+  spr(res.spr, gx, gy, { ax: res.ax, ay: res.ay, alpha: SN.alpha < .98 ? SN.alpha : undefined });
   if (SN.alpha < .3) return;
-  const flick = () => (Math.sin(t * .5) > 0 ? 1 : 0);
-  const fl = (ex, ey, k) => {
-    if (k < .05) return; const rp = RAMPS.cyan;
-    const h = 3 + ((t >> 2) & 1) + flick();
-    for (let i = 0; i < h; i++) { px(ex, ey - 4 - i, i < 1 ? rp[4] : i < 3 ? rp[3] : rp[2]); if (i < 2) { px(ex + 1, ey - 4 - i, rp[2]); px(ex - 1, ey - 4 - i, rp[1]); } }
-    rectF(ex - 1, ey - 1, 3, 3, rp[4]); px(ex, ey - 2, rp[3]);
+  const wp = q => [gx + (q[0] - res.ax) * P, gy + (q[1] - res.ay) * P];
+  const flame = (q, k) => {
+    if (k < .05) return; const [x, y] = wp(q), rp = RAMPC.cyan, h = 2 + ((t >> 3) & 1) + (Math.sin(t * .5) > 0 ? 1 : 0);
+    rect(x - 2, y - 2, 4, 4, rp[4]);
+    for (let i = 0; i < h; i++) rect(x - 2 + (i === h - 1 ? ((t >> 2) & 1) * 4 - 2 : 0), y - 6 - i * 4, 4, 4, i === 0 ? rp[3] : i === 1 ? rp[2] : rp[1]);
   };
-  fl(gx + res.eyeR[0], gy + res.eyeR[1] - 1, SN.flame); fl(gx + res.eyeL[0], gy + res.eyeL[1] - 1, SN.flame2);
-  if (a > 0) { const hx = gx + res.hand[0], hy = gy + res.hand[1]; glowD(hx, hy, 8 + a * 3, RAMPS.cyan[1], 1.2, .8); px(hx, hy, PL.white); if ((t >> 1) & 1) px(hx + ((t * 7) % 7) - 3, hy - 5 - ((t * 3) % 5), RAMPS.cyan[3]); }
+  flame(res.eyeR, SN.flame); flame(res.eyeL, SN.flame2);
+  if (a > 0) { const [x, y] = wp(res.hand); rings(x, y, [[2 + a, '#1e86d0', .5], [1 + (a >> 1), '#56d4f4', .8]]); rect(x - 2, y - 2, 4, 4, '#ffffff'); }
 }
-function drawWaterPx() {
-  const t = G.t, yW = lerp(270, 143, clamp(world.lv, 0, 1.1)) | 0;
-  for (let x = 0; x < LW; x++) {
-    const sy = yW + Math.round(Math.sin(x * .09 + t * .045) * 1.5 + Math.sin(x * .21 - t * .03));
-    if (sy >= LH) continue;
-    px(x, sy, ((x + (t >> 2)) & 5) < 4 ? PL.foam : hex('#5ab4f0'));
-    for (let y = sy + 1; y < LH; y++) if (dith(x, y, y - sy < 4 ? .5 : .32)) FB[y * LW + x] = y - sy < 4 ? hex('#2a78c8') : hex('#0f4a90');
+function drawWater(t) {
+  const yW = lerp(560, 286, clamp(world.lv, 0, 1.1));
+  if (yW >= H) return;
+  for (let x = 0; x < W; x += 8) {
+    const y = yW + Math.sin(x * .02 + t * .045) * 4 + Math.sin(x * .05 - t * .03) * 2;
+    rect(x, y, 8, H - y, 'rgba(20,90,170,.38)'); rect(x, y, 8, 4, ((x >> 3) + (t >> 3)) % 5 ? '#9fe4ff' : '#ffffff');
   }
 }
-function drawLanternsPx() {
-  for (const l of lanterns) {
-    const x = l.x / 2, y = l.y / 2, k = Math.min(1, l.life / 90), f = 1 + Math.sin(G.t * .3 + x) * .08;
-    glowD(x, y, 36 * f * k, PL.gold, 1.2, .7); glowD(x, y, 12 * f, hex('#fff0a8'), 1, .9);
-    blit(lantSpr, x - 3, y - 4, false, k < 1 ? k : undefined);
-  }
-}
-function drawWellPx() {
-  if (!well.on) return; const x = well.x / 2, y = well.y / 2, t = G.t, b = 1 + well.boost * .35;
-  glowD(x, y, 30 * b, hex('#ffe7a8'), 1.4, .55); discF(x, y, 9, PL.ink); discF(x, y, 7, hex('#02040d'));
-  for (let k = 0; k < 16; k++) { const a = k / 16 * TAU + t * .02, r = 10 + (k & 1); px(x + Math.cos(a) * r, y + Math.sin(a) * r, k % 4 === 0 ? PL.white : hex('#ffd05a')); }
-  for (const R of [30, 45]) for (let k = 0; k < 48; k++) { const a = k / 48 * TAU - t * .004 * (R > 35 ? -1 : 1); if (k % 3 === 0) px(x + Math.cos(a) * R, y + Math.sin(a) * R, hex('#1a3a70')); }
-}
-function drawBulletsPx() {
-  for (const b of bul) {
-    if (b.k !== 'orb') continue;
-    const x = b.x / 2, y = b.y / 2; if (x < -20 || x > LW + 20 || y < -20 || y > LH + 20) continue;
-    const fa = b.fade === undefined ? 1 : b.fade, pop = Math.min(1, b.age / 6) * fa; if (pop < .05) continue;
-    const rl = b.r <= 4 ? 2 : b.r <= 6 ? 3 : 4, rp = rampOf(b.hue);
-    glowD(x, y, rl * 2.5, rp[1], 1.7, .6 * pop);
-    if (b.tail) { const sp_ = Math.hypot(b.vx, b.vy) || 1; for (let k = 1; k <= 3; k++) px(x - b.vx / sp_ * k * 1.8, y - b.vy / sp_ * k * 1.8, k === 1 ? rp[2] : rp[1]); }
-  }
-  for (const b of bul) {
-    const x = b.x / 2, y = b.y / 2; if (x < -60 || x > LW + 60 || y < -60 || y > LH + 60) continue;
-    const fa = b.fade === undefined ? 1 : b.fade, pop = Math.min(1, b.age / 6) * fa; if (pop < .05) continue;
-    const dl = pop < 1 ? pop : undefined;
-    if (b.k === 'orb') { const rl = b.r <= 4 ? 2 : b.r <= 6 ? 3 : 4; blit(orbSpr(b.hue, rl), x - rl, y - rl, false, dl); }
-    else if (b.k === 'moth') { const s = mothSpr(((b.age >> 3) & 1), b.hue); blit(s, x - 3, y - 2, b.vx < 0, dl); }
-    else if (b.k === 'bone') {
-      if (fa < 1 && ((b.age & 1) || fa < .4)) continue;
-      const hl = (b.L - b.w) / 2, c = Math.cos(b.a), s = Math.sin(b.a), x0 = (b.x - c * hl) / 2, y0 = (b.y - s * hl) / 2, x1 = (b.x + c * hl) / 2, y1 = (b.y + s * hl) / 2;
-      const deep = b.lay === 1, col = deep ? RAMPS.deep[3] : PL.bone, shade = deep ? RAMPS.deep[2] : PL.bone2, out = deep ? RAMPS.deep[0] : PL.ink, rad = Math.max(1.3, b.w / 5.2), kr = rad + .9;
-      const nx = -s * (rad + .6), ny = c * (rad + .6), ix = c * 1.0, iy = s * 1.0;
-      const knobs = [[x0 + nx - ix, y0 + ny - iy], [x0 - nx - ix, y0 - ny - iy], [x1 + nx + ix, y1 + ny + iy], [x1 - nx + ix, y1 - ny + iy]];
-      capsuleF(x0, y0, x1, y1, rad + 1, out); for (const k of knobs) discF(k[0], k[1], kr + 1, out);
-      capsuleF(x0, y0, x1, y1, rad, col); for (const k of knobs) discF(k[0], k[1], kr, col);
-      capsuleF(x0 + nx * .5, y0 + ny * .5, x1 + nx * .5, y1 + ny * .5, .4, PL.white);
-      capsuleF(x0 - nx * .6, y0 - ny * .6, x1 - nx * .6, y1 - ny * .6, .4, shade);
+
+/* ---------- battle box (a pixel-art frame, rotated/moved smoothly) ---------- */
+const boxC = { k: null, s: null, W: 0, H: 0 };
+function boxSprite() {
+  const Wd = Math.max(4, Math.round(box.hw * 2 / P)), Hd = Math.max(4, Math.round(box.hh * 2 / P)), n = box.n, pad = 3;
+  const k = Wd + '_' + Hd + '_' + (n >= 30 ? 'r' : n.toFixed(1));
+  if (boxC.k === k) return boxC;
+  const ins = (lx, ly, d) => { const a = Wd / 2 + d, b = Hd / 2 + d; if (a <= 0 || b <= 0) return false; if (n >= 30) return Math.abs(lx) <= a && Math.abs(ly) <= b; return Math.pow(Math.abs(lx / a), n) + Math.pow(Math.abs(ly / b), n) <= 1; };
+  const fill = hex('#030716'), spark = hex('#0c1a3e'), g1 = hex('#2a78d0'), g2 = hex('#163e80');
+  const s = paint(Wd + pad * 2, Hd + pad * 2, () => {
+    for (let j = 0; j < Hd + pad * 2; j++) for (let i = 0; i < Wd + pad * 2; i++) {
+      const lx = i - pad + .5 - Wd / 2, ly = j - pad + .5 - Hd / 2;
+      if (ins(lx, ly, 0)) TB[j * TW + i] = ins(lx, ly, -1) ? ((i * 7 + j * 13) % 29 === 0 ? spark : fill) : PL.white;
+      else if (ins(lx, ly, 1)) TB[j * TW + i] = g1; else if (ins(lx, ly, 2)) TB[j * TW + i] = g2;
     }
+  });
+  Object.assign(boxC, { k, s, W: Wd, H: Hd, pad }); return boxC;
+}
+function drawBox(t) {
+  const b = boxSprite(), c = sprCanvas(b.s);
+  ctx.save(); ctx.translate(box.cx, box.cy); ctx.rotate(box.rot); ctx.drawImage(c, -(b.W / 2 + b.pad) * P, -(b.H / 2 + b.pad) * P, c.width * P, c.height * P); ctx.restore();
+  if (G.scene !== 'attack') return;
+  const L = box.cx - box.hw + P, R = box.cx + box.hw - P, B = box.cy + box.hh - P;
+  if (water.on && box.n >= 30 && water.y < B) { // water inside the box + surface line
+    rect(L, water.y, R - L, B - water.y, '#082a5c');
+    for (let x = L; x < R; x += 8) rect(x, water.y - 2 + Math.round(Math.sin(x * .05 + t * .06) * 1.5), 8, 4, ((x >> 3) + (t >> 2)) % 6 ? '#9fe4ff' : '#ffffff');
+  }
+  if (water.on) for (let x = 0; x < W; x += 24) { if (x > L - 24 && x < R) continue; rect(x + ((t >> 1) % 24), water.y - 2, 8, 4, '#3a86d0'); }
+  if (wave.on && A) for (let x = L; x < R; x += 8) { // surf wave
+    const y = box.cy + waveF(x + 4 - box.cx, A.f);
+    rect(x, y, 8, B - y, '#0a3a78'); rect(x, y + 12, 8, 4, '#0f4e9a'); rect(x, y + 8, 8, 4, '#4aa8ec'); rect(x, y + 4, 8, 4, '#9fe4ff'); rect(x, y, 8, 4, '#ffffff');
   }
 }
-function beamBand(sg, wl, env, hue, ft) {
-  const rp = rampOf(hue), half = wl * env / 2; if (half < .5) return;
-  const x0 = sg.x0 / 2, y0 = sg.y0 / 2, len = Math.min(sg.len / 2, 470);
-  for (let s = 0; s < len; s += .7) {
-    const cx = x0 + sg.dx * s, cy = y0 + sg.dy * s;
-    if (cx < -half - 4 || cx > LW + half + 4 || cy < -half - 4 || cy > LH + half + 4) { if (s > 30) continue; }
-    const ph = ((s * 1.6 + ft * 9) % 64), ring = ph < 2.2;
-    for (let u = -half; u <= half; u += .7) {
-      const a = Math.abs(u) / half; let c;
-      if (a < .3) c = PL.white; else if (a < .58) c = rp[3]; else if (a < .84) c = rp[2]; else { if (!dith(cx - sg.dy * u, cy + sg.dx * u, .55)) continue; c = rp[1]; }
-      if (ring && a < .92) c = PL.white;
-      px(cx - sg.dy * u, cy + sg.dx * u, c);
-    }
+
+/* ---------- bullets, beams, Luna, soul ---------- */
+function drawBullets() {
+  for (const b of bul) {
+    if (b.x < -80 || b.x > W + 80 || b.y < -80 || b.y > H + 80) continue;
+    const fa = b.fade === undefined ? 1 : b.fade, al = Math.min(1, b.age / 6) * fa; if (al < .05) continue;
+    if (b.k === 'orb') {
+      if (b.tail) { const sp_ = Math.hypot(b.vx, b.vy) || 1, rp = rampCss(b.hue); for (let k = 1; k <= 2; k++) rect(b.x - b.vx / sp_ * (k * 8 + 4) - 2, b.y - b.vy / sp_ * (k * 8 + 4) - 2, 4, 4, k === 1 ? rp[2] : rp[1]); }
+      spr(orbSpr(b.hue, orbSize(b.r)), b.x, b.y, { alpha: al < 1 ? al : undefined });
+    } else if (b.k === 'moth') spr(mothSpr((b.age >> 3) & 1, b.hue), b.x, b.y, { flip: b.vx < 0, alpha: al < 1 ? al : undefined });
+    else if (b.k === 'bone') spr(boneSpr(Math.round(b.L / P), b.lay), b.x, b.y, { ang: b.a, alpha: al < 1 ? al : undefined });
   }
 }
-function drawBeamsPx() {
+function beamPath(sg, fn) { ctx.save(); ctx.translate(sg.x0, sg.y0); ctx.rotate(Math.atan2(sg.dy, sg.dx)); fn(Math.min(sg.len, 1400)); ctx.restore(); }
+function drawBeams(t) {
   for (const b of blasters) {
-    const segs = beamSegs(b), rp = rampOf(b.hue);
-    if (!b.firing && b.ch > 0) { // telegraph : dotted path, drawn along the REAL (refracted) route
-      for (const sg of segs) {
-        const len = Math.min(sg.len / 2, 470), x0 = sg.x0 / 2, y0 = sg.y0 / 2, half = b.bw / 4 * (.6 + b.ch * .4);
-        for (let s = 0; s < len; s++) {
-          const cx = x0 + sg.dx * s, cy = y0 + sg.dy * s; if (cx < -4 || cx > LW + 4 || cy < -4 || cy > LH + 4) continue;
-          if ((((s + (b.t >> 1)) | 0) % 8) < 4) { px(cx - sg.dy * half, cy + sg.dx * half, rp[2]); px(cx + sg.dy * half, cy - sg.dx * half, rp[2]); }
-          if (b.ch > .5 && (s & 3) === 0) px(cx, cy, rp[3]);
-          if (dith(cx | 0, cy | 0, .1 + b.ch * .14)) for (let u = -half; u <= half; u += 1) px(cx - sg.dy * u, cy + sg.dx * u, rp[0]);
-        }
-      }
+    const segs = beamSegs(b), rp = rampCss(b.hue);
+    if (!b.firing && b.ch > 0) {
+      const half = Math.round(b.bw / 2 / P) * P;
+      for (const sg of segs) beamPath(sg, len => {
+        ctx.globalAlpha = .1 + b.ch * .12; rect(0, -half, len, half * 2, rp[0]); ctx.globalAlpha = 1;
+        for (let s = 0; s < len; s += 16) if ((((s >> 4) + (b.t >> 2)) & 1)) { rect(s, -half, 8, 4, rp[2]); rect(s, half - 4, 8, 4, rp[2]); }
+        if (b.ch > .5) for (let s = 8; s < len; s += 32) rect(s, -2, 4, 4, rp[3]);
+      });
     } else if (b.env > .02) {
-      segs.forEach(sg => beamBand(sg, b.bw / 2, b.env, b.hue, b.ft));
-      if (segs.length > 1) { const hx = segs[1].x0 / 2, hy = segs[1].y0 / 2; glowD(hx, hy, 14 * b.env, rp[3], 1, .9); for (let k = 0; k < 12; k++) { const a = k / 12 * TAU + b.ft * .2; px(hx + Math.cos(a) * 8, hy + Math.sin(a) * 3, PL.white); } }
-      const m = segs[0]; glowD(m.x0 / 2, m.y0 / 2, 10 + b.bw / 5 * b.env, rp[2], 1.1, .9);
+      const w = Math.max(4, Math.round(b.bw * b.env / P) * P);
+      const band = f => Math.max(4, Math.round(w * f / 8) * 8);
+      for (const sg of segs) beamPath(sg, len => {
+        let q = band(1); rect(-8, -q / 2, len, q, rp[1]);
+        q = band(.78); rect(-8, -q / 2, len, q, rp[2]);
+        q = band(.56); rect(-8, -q / 2, len, q, rp[3]);
+        q = band(.3); rect(-8, -q / 2, len, q, '#ffffff');
+        const r = band(.9); for (let s = (b.ft * 18) % 64; s < len; s += 64) rect(s, -r / 2, 8, r, '#ffffff');
+      });
+      if (segs.length > 1) { const s1 = segs[1]; rings(s1.x0, s1.y0, [[Math.round(5 * b.env) + 2, rp[2], .8], [Math.round(3 * b.env) + 1, '#ffffff', 1]]); }
+      rings(segs[0].x0, segs[0].y0, [[Math.round(b.bw / 10 * b.env) + 3, rp[2], .9], [Math.round(b.bw / 18 * b.env) + 2, '#ffffff', 1]]);
     }
   }
 }
-function drawLunaPx(b) {
-  const spr = lunaSprite(b.a, b.open, 1), x = b.x / 2, y = b.y / 2, rp = rampOf(b.hue);
-  blit(spr, x - spr.w / 2, y - spr.h / 2, false, b.alpha < .98 ? b.alpha : undefined);
-  const a16 = Math.round(b.a / (TAU / 32)) * (TAU / 32), c = Math.cos(a16), s = Math.sin(a16);
-  for (const [ox, oy, k] of [[-10, -9, 1], [-22, -4, .7]]) { const ex = x + ox * c - oy * s, ey = y + ox * s + oy * c; rectF(ex - 1, ey - 1, 2, 2, b.ch > .3 ? rp[4] : rp[2]); if (b.ch > .2) glowD(ex, ey, 4 + b.ch * 5, rp[1], 1.2, .8 * k); }
-  const mx = b.x / 2 + c * 34, my = b.y / 2 + s * 34;
-  if (b.ch > 0 && !b.firing) { const r = 3 + b.ch * 16; glowD(mx, my, r, rp[2], 1.1, .95); discF(mx, my, 1 + b.ch * 3, PL.white); }
+function drawLuna(b) {
+  spr(lunaSpr(b.open), b.x, b.y, { ang: b.a, alpha: b.alpha < .98 ? b.alpha : undefined });
+  const c = Math.cos(b.a), s = Math.sin(b.a), rp = rampCss(b.hue);
+  for (const [ox, oy] of [[-5, -4], [-12, -2]]) { const x = b.x + (ox * c - oy * s) * P, y = b.y + (ox * s + oy * c) * P; rect(x - 2, y - 2, 4, 4, b.ch > .3 ? '#ffffff' : rp[2]); }
+  if (b.ch > 0 && !b.firing) { const mx = b.x + c * 72, my = b.y + s * 72, r = Math.round(1 + b.ch * 4); rings(mx, my, [[r + 1, rp[1], .7], [r, rp[2], 1], [Math.max(0, r - 1), '#ffffff', 1]]); }
 }
-const flipCache = new Map();
-function sprFlipV(s) { if (flipCache.has(s)) return flipCache.get(s); const o = mkSpr(s.w, s.h); for (let j = 0; j < s.h; j++) for (let i = 0; i < s.w; i++) o.d[j * s.w + i] = s.d[(s.h - 1 - j) * s.w + i]; flipCache.set(s, o); return o; }
-function drawSoulPx() {
-  const x = soul.wx / 2, y = soul.wy / 2, inv = G.inv > 0 && ((G.inv >> 2) & 1);
-  const col = soul.mode === 'surf' ? PL.blue : PL.red, hi = hex('#ffc0c8');
-  if (soul.mirror) { // the reflection : upside-down, rippled, only half there
-    const ry = (2 * water.y - soul.wy) / 2, rx = x + Math.round(Math.sin(G.t * .15) * 1);
-    blit(sprFlipV(heartSpr(RAMPS.deep[3], PL.white)), rx - 4, ry - 4, false, .75);
-    for (let yy = Math.min(y, ry); yy < Math.max(y, ry); yy += 3) if ((yy | 0) % 6 === 0) px(x, yy, RAMPS.deep[2]);
-  }
-  glowD(x, y, 8, soul.mode === 'surf' ? RAMPS.blue[1] : RAMPS.red[1], 1.4, .5);
-  blit(heartSpr(col, soul.mode === 'surf' ? hex('#bcd2ff') : hi), x - 4, y - 4, false, inv ? .3 : undefined);
-  if (I.slow) px(x, y, PL.white);
+function drawSoul(t) {
+  const inv = G.inv > 0 && ((G.inv >> 2) & 1);
+  if (soul.mirror) { const ry = 2 * water.y - soul.wy; spr(heartSpr('mirror'), soul.wx + Math.round(Math.sin(t * .15) * 2), ry, { alpha: .8 }); }
+  spr(heartSpr(soul.mode === 'surf' ? 'blue' : 'red'), soul.wx, soul.wy, { alpha: inv ? .3 : undefined });
+  if (I.slow) rect(soul.wx - 2, soul.wy - 2, 4, 4, '#ffffff');
 }
-function drawParticlesPx() {
-  for (const p of parts) {
-    const a = p.life / p.max, rp = rampOf(p.hue), c = a > .66 ? rp[3] : a > .33 ? rp[2] : rp[1], x = p.x / 2, y = p.y / 2;
-    if (p.big) rectF(x, y, 2, 2, c); else px(x, y, c);
-  }
+function drawLanterns(t) {
+  for (const l of lanterns) { const k = Math.min(1, l.life / 90), f = 1 + Math.sin(t * .3 + l.x) * .06; rings(l.x, l.y, [[Math.round(8 * f * k), '#5a4210', .55], [Math.round(5 * f * k), '#a07a20', .75]]); spr(lantSpr, l.x, l.y, { alpha: k < 1 ? k : undefined }); }
+}
+function drawWell(t) {
+  if (!well.on) return; const b = 1 + well.boost * .35;
+  rings(well.x, well.y, [[Math.round(9 * b), '#4a3a18', .7], [6, PL ? '#ffe7a8' : '#fff', 1], [5, '#02040d', 1]]);
+  for (let k = 0; k < 12; k++) { const a = k / 12 * TAU + t * .02; rect(well.x + Math.cos(a) * 26 - 2, well.y + Math.sin(a) * 26 - 2, 4, 4, k % 3 ? '#ffd05a' : '#ffffff'); }
+  for (const R of [60, 92]) for (let k = 0; k < 24; k++) { const a = k / 24 * TAU - t * .004 * (R > 70 ? -1 : 1); rect(well.x + Math.cos(a) * R - 2, well.y + Math.sin(a) * R - 2, 4, 4, '#1a3a70'); }
+}
+function drawParticles() {
+  for (const p of parts) { const a = p.life / p.max, rp = rampCss(p.hue), s = p.big ? 8 : 4; rect(p.x - s / 2, p.y - s / 2, s, s, a > .66 ? rp[3] : a > .33 ? rp[2] : rp[1]); }
 }
 
 /* ---------- UI ---------- */
-function drawBubblePx(lines, shown, x, y) {
-  lc.font = '16px ' + FONT;
-  let mw = 0; for (const l of lines) mw = Math.max(mw, lc.measureText(l).width);
-  const w = Math.max(60, Math.ceil(mw) + 14), h = lines.length * 18 + 10;
-  rectF(x + 1, y, w - 2, h, PL.ink); rectF(x, y + 1, w, h - 2, PL.ink);
-  rectF(x + 2, y + 1, w - 4, h - 2, PL.white); rectF(x + 1, y + 2, w - 2, h - 4, PL.white);
-  const ty = y + (h >> 1);
-  for (let i = 0; i < 6; i++) rectF(x - 1 - i, ty - 5 + i, 1, 11 - i * 2, i === 0 ? PL.white : PL.white);
-  for (let i = 0; i < 6; i++) { px(x - 1 - i, ty - 5 + i - 1, PL.ink); px(x - 1 - i, ty + 5 - i + 1, PL.ink); }
-  px(x - 7, ty, PL.ink);
-  let rem = shown; lines.forEach((ln, i) => { T(ln.slice(0, Math.max(0, rem)), x + 7, y + 17 + i * 18, '#0a0d24'); rem -= ln.length; });
+function drawBubble(lines, shown, x, y) {
+  ctx.font = '32px ' + FONT; let mw = 0; for (const l of lines) mw = Math.max(mw, ctx.measureText(l).width);
+  const w = Math.max(120, Math.ceil(mw / 4) * 4 + 32), h = lines.length * 36 + 24;
+  rect(x + 4, y, w - 8, h, css(PL.ink)); rect(x, y + 4, w, h - 8, css(PL.ink));
+  rect(x + 4, y + 4, w - 8, h - 8, '#ffffff');
+  const ty = y + Math.round(h / 8) * 4; for (let i = 0; i < 4; i++) { rect(x - 4 - i * 4, ty - 12 + i * 4, 4, 24 - i * 8, css(PL.ink)); if (i < 3) rect(x - i * 4, ty - 8 + i * 4, 4, 16 - i * 8, '#ffffff'); }
+  let rem = shown; lines.forEach((ln, i) => { T(ln.slice(0, Math.max(0, rem)), x + 16, y + 38 + i * 36, '#0a0d24'); rem -= ln.length; });
   return h;
 }
-function drawHUDpx(dim) {
-  rectF(0, 221, LW, LH - 221, hex('#050a1c')); rectF(0, 221, LW, 1, hex('#1a3a70'));
+function drawHUD(dim) {
+  rect(0, 442, W, H - 442, '#050a1c'); rect(0, 442, W, 4, '#1a3a70');
   const c1 = dim ? '#b8c6e6' : '#ffffff';
-  T('きみ  LV 19', 34, 238, c1); T('HP', 135, 238, c1, 16);
-  rectF(152, 227, 66, 10, hex('#6a1030')); rectF(152, 227, Math.round(66 * clamp(G.hp / G.maxhp, 0, 1)), 10, PL.yellow); rectS(151, 226, 68, 12, PL.ink);
-  T(`${G.hp} / ${G.maxhp}`, 226, 238, G.hp <= 20 ? '#ff8da0' : c1);
-  if (A && A.lantern) for (let i = 0; i < 3; i++) blit(lantSpr, 330 + i * 12, 227, false, i < G.lan ? undefined : .25);
+  T('きみ  LV 19', 68, 478, c1); T('HP', 270, 478, c1);
+  rect(304, 456, 132, 20, '#6a1030'); rect(304, 456, Math.round(132 * clamp(G.hp / G.maxhp, 0, 1) / 4) * 4, 20, '#ffe566');
+  T(`${G.hp} / ${G.maxhp}`, 452, 478, G.hp <= 20 ? '#ff8da0' : c1);
+  if (A && A.lantern) for (let i = 0; i < 3; i++) spr(lantSpr, 680 + i * 28, 466, { alpha: i < G.lan ? undefined : .25 });
   const labs = ['たたかう', 'こうどう', 'アイテム', 'みのがす'];
   for (let i = 0; i < 4; i++) {
-    const x = 30 + i * 105, y = 244, sel = G.scene === 'menu' && G.sub === 'main' && G.sel === i, spare = i === 3 && G.turn >= 6;
-    const col = sel ? PL.yellow : dim ? hex('#3a5a90') : hex('#58c8f4');
-    rectS(x, y, 96, 22, col); rectS(x + 1, y + 1, 94, 20, col);
-    if (sel) for (let j = 0; j < 20; j++) for (let k = 0; k < 94; k++) if (dith(x + k, y + 1 + j, .22)) px(x + 1 + k, y + 1 + j, hex('#6a5a10'));
-    T(labs[i], x + 54, y + 16, sel ? '#ffe566' : spare ? '#ffe566' : dim ? '#8aa2cc' : '#cfeeff', 16, 'center');
-    if (sel) blit(heartSpr(PL.red, hex('#ffc0c8')), x + 5, y + 7);
+    const x = 60 + i * 210, y = 488, sel = G.scene === 'menu' && G.sub === 'main' && G.sel === i, spare = i === 3 && G.turn >= 6;
+    if (sel) rect(x, y, 192, 44, '#3a3208');
+    frame4(x, y, 192, 44, sel ? '#ffe566' : dim ? '#3a5a90' : '#58c8f4');
+    T(labs[i], x + 108, y + 33, sel || spare ? '#ffe566' : dim ? '#8aa2cc' : '#cfeeff', 32, 'center');
+    if (sel) spr(heartSpr('red'), x + 26, y + 22);
   }
 }
-function drawBoxTextPx() {
-  const L = Math.round((box.cx - box.hw) / 2) + 14, Tp = Math.round((box.cy - box.hh) / 2) + 22;
+function drawBoxText() {
+  const L = Math.round(box.cx - box.hw) + 28, Tp = Math.round(box.cy - box.hh) + 46;
   if (Dlg.on && Dlg.mode === 'box') {
-    let rem = Dlg.n; Dlg.wl.forEach((ln, i) => { T(ln.slice(0, Math.max(0, rem)), L, Tp + i * 20, '#ffffff'); rem -= ln.length; });
-    if (Dlg.n >= Dlg.flat.length) T('▼', Math.round((box.cx + box.hw) / 2) - 20, Math.round((box.cy + box.hh) / 2) - 8, '#9fdcff');
+    let rem = Dlg.n; Dlg.wl.forEach((ln, i) => { T(ln.slice(0, Math.max(0, rem)), L, Tp + i * 40, '#ffffff'); rem -= ln.length; });
+    if (Dlg.n >= Dlg.flat.length) T('▼', Math.round(box.cx + box.hw) - 44, Math.round(box.cy + box.hh) - 16, '#9fdcff');
     return;
   }
   if (G.scene !== 'menu') return;
   const s = G.sub;
   if (s === 'main') {
     const full = G.fn < 0 ? '＊ アイテムを持っていない。' : STORY.flavor[G.turn] || '';
-    let rem = Math.max(0, G.fn < 0 ? 999 : G.fn); full.split('\n').forEach((ln, i) => { T(ln.slice(0, rem | 0), L, Tp + i * 20, '#fff'); rem -= ln.length; });
+    let rem = Math.max(0, G.fn < 0 ? 999 : G.fn); full.split('\n').forEach((ln, i) => { T(ln.slice(0, rem | 0), L, Tp + i * 40, '#fff'); rem -= ln.length; });
   } else if (s === 'act' || s === 'item' || s === 'mercy') {
     const items = s === 'act' ? ['チェック', '潮を読む', '話す'] : s === 'item' ? G.items.map(it => `${it.n} ×${it.c}`) : ['みのがす', 'にげる'];
-    items.forEach((it, i) => { const y = Tp + i * 22; T('＊ ' + it, L + 22, y, (s === 'mercy' && i === 0 && G.turn >= 6) ? '#ffe566' : '#fff'); if (G.idx === i) blit(heartSpr(PL.red, hex('#ffc0c8')), L + 2, y - 10); });
+    items.forEach((it, i) => { const y = Tp + i * 44; T('＊ ' + it, L + 44, y, (s === 'mercy' && i === 0 && G.turn >= 6) ? '#ffe566' : '#fff'); if (G.idx === i) spr(heartSpr('red'), L + 18, y - 11); });
   } else if (s === 'fightbar') {
-    const b = G.bar, bx = Math.round(box.cx / 2) - 165, by = Math.round(box.cy / 2) - 19;
-    rectF(bx, by, 330, 38, hex('#0b1c3a'));
-    for (let x = 0; x < 330; x++) { const k = 1 - Math.abs(x - 165) / 165; for (let y = 0; y < 38; y++) if (dith(bx + x, by + y, k * k * .95)) px(bx + x, by + y, k > .6 ? hex('#fff0b8') : hex('#8ab4e8')); }
-    rectS(bx, by, 330, 38, PL.white); rectS(bx + 1, by + 1, 328, 36, PL.white); rectF(bx + 164, by, 2, 38, PL.white);
-    const blink = b.state === 'stop' ? ((b.t >> 2) & 1) : 1; if (blink) { rectF(bx + b.x / 2 - 3, by - 5, 6, 48, PL.ink); rectF(bx + b.x / 2 - 2, by - 4, 4, 46, b.state === 'stop' ? PL.yellow : PL.white); }
+    const b = G.bar, bx = Math.round(box.cx) - 332, by = Math.round(box.cy) - 40;
+    rect(bx, by, 664, 80, '#0b1c3a');
+    for (let x = 0; x < 664; x += 8) { const k = 1 - Math.abs(x + 4 - 332) / 332; rect(bx + x, by, 8, 80, k > .8 ? '#fff0b8' : k > .55 ? '#c8d8f0' : k > .3 ? '#6f98d8' : '#2a4a8a'); }
+    frame4(bx, by, 664, 80, '#ffffff'); rect(bx + 330, by, 4, 80, '#ffffff');
+    if (b.state !== 'stop' || ((b.t >> 2) & 1)) { rect(bx + b.x - 8, by - 12, 16, 104, css(PL.ink)); rect(bx + b.x - 4, by - 8, 8, 96, b.state === 'stop' ? '#ffe566' : '#ffffff'); }
   }
 }
-function drawSlashPx() {
+function drawSlash() {
   const b = G.bar; if (!b || b.state !== 'stop' || b.t < 1 || b.t > 30 || G.scene !== 'menu') return;
-  const x = SN.x / 2, y = SN.y / 2 - 50, u = b.t / 30;
-  for (let i = 0; i < 4; i++) { const k = clamp(b.t / 5 - i * .6, 0, 1); if (k <= 0) continue; const ox = (i - 1.5) * 9; if (u < .8) for (let w = 0; w < 3; w++) lineP(x - 40 + ox + w, y - 40, x - 40 + ox + w + 80 * k, y - 40 + 80 * k, w === 1 ? PL.white : RAMPS.cyan[2]); }
-  if (G.turn < 6 && b.t > 4 && u < .85) T('MISS', SN.x / 2 + 56, SN.y / 2 - 90 - u * 12, '#9fe6ff', 16, 'center', '#021');
+  const x = SN.x, y = SN.y - 100, u = b.t / 30;
+  if (u < .8) for (let i = 0; i < 4; i++) { const k = clamp(b.t / 5 - i * .6, 0, 1); if (k <= 0) continue; ctx.save(); ctx.translate(x - 80 + (i - 1.5) * 18, y - 80); ctx.rotate(Math.PI / 4); rect(0, -4, 226 * k, 8, '#ffffff'); rect(0, -8, 226 * k, 4, '#56d4f4'); ctx.restore(); }
+  if (G.turn < 6 && b.t > 4 && u < .85) T('MISS', SN.x + 112, SN.y - 180 - u * 24, '#9fe6ff', 32, 'center', '#021');
 }
-function drawTitlePx(t) {
-  shadeRect(0, 176, LW, LH, .55);
-  T('TIDETALE', 140, 70, '#ffffff', 48, 'center', '#0b2a66');
-  T('─ L A S T   T I D E ─', 140, 96, '#bfe8ff', 16, 'center', '#061a40');
-  T('非公式ファンゲーム', 140, 124, '#9fd0ee', 16, 'center', '#061a40');
-  T('Undertale AU ─ サンズ戦', 140, 142, '#9fd0ee', 16, 'center', '#061a40');
-  T(`◀  むずかしさ：${DIFFS[G.diff].n}  ▶`, 240, 214, '#ffffff', 16, 'center');
-  T('Z / Enter でスタート', 240, 236, '#ffe566', 16, 'center');
-  T('矢印/WASD:移動  Z:決定  X:戻る  Shift:ゆっくり  M:音', 240, 260, '#6a9bbd', 16, 'center');
+function drawTitle() {
+  rect(0, 352, W, H - 352, 'rgba(2,6,18,.6)');
+  T('TIDETALE', 280, 140, '#ffffff', 96, 'center', '#0b2a66');
+  T('─ L A S T   T I D E ─', 280, 192, '#bfe8ff', 32, 'center', '#061a40');
+  T('非公式ファンゲーム', 280, 248, '#9fd0ee', 32, 'center', '#061a40');
+  T('Undertale AU ─ サンズ戦', 280, 284, '#9fd0ee', 32, 'center', '#061a40');
+  T(`◀  むずかしさ：${DIFFS[G.diff].n}  ▶`, 480, 428, '#ffffff', 32, 'center');
+  T('Z / Enter でスタート', 480, 472, '#ffe566', 32, 'center');
+  T('矢印/WASD:移動  Z:決定  X:戻る  Shift:ゆっくり  M:音', 480, 520, '#6a9bbd', 32, 'center');
 }
-function drawDeadPx() {
-  const t = G.dead; shadeRect(0, 0, LW, LH, Math.min(.85, t / 50));
-  if (t > 40) { T('ここで終わりじゃない…', 240, 125, '#ffffff', 32, 'center'); T('決意を、取り戻せ。', 240, 150, '#9fdcff', 16, 'center'); }
-  if (t > 110) T('Z：もういちど', 240, 200, '#ffe566', 16, 'center');
+function drawDead() {
+  const t = G.dead; rect(0, 0, W, H, `rgba(0,0,8,${Math.min(.85, t / 50)})`);
+  if (t > 40) { T('ここで終わりじゃない…', 480, 250, '#ffffff', 64, 'center'); T('決意を、取り戻せ。', 480, 300, '#9fdcff', 32, 'center'); }
+  if (t > 110) T('Z：もういちど', 480, 400, '#ffe566', 32, 'center');
 }
-function drawEndPx() {
-  const e = G.endCard, t = e.t; FB.fill(PL.ink);
-  for (const m of MOTES) if (m.c) px(m.x, m.y, e.kind === 'sunk' ? hex('#2a4a9a') : hex('#3a8ad0'));
+function drawEnd() {
+  const e = G.endCard, t = e.t; rect(0, 0, W, H, '#070a1c');
+  for (const m of MOTES) rect(m.x, m.y, 4, 4, e.kind === 'sunk' ? '#2a4a9a' : '#3a8ad0');
   const names = { dawn: '─ 夜明けの渡し ─', calm: '─ 凪の渡し ─', sunk: '─ 沈黙の潮 ─' };
-  const lines = e.kind === 'dawn' ? '42回目の夜は、二人で漕ぎ出して明けた。' : e.kind === 'calm' ? '潮は引いた。けれど、まだ話すことが残っている。' : '潮はすべてを飲み込んだ。次は、手を取ってあげて。';
-  if (t > 20) { T('THE END', 240, 100, '#f2fbff', 48, 'center', '#0b2a66'); T(names[e.kind], 240, 134, e.kind === 'sunk' ? '#8fa8ff' : '#ffe9a8', 16, 'center'); }
-  if (t > 60) T(lines, 240, 162, '#cfe9ff', 16, 'center');
-  if (t > 90) T(`被弾 ${G.hits} 回 ／ ゲームオーバー ${G.deaths} 回 ／ ${DIFFS[G.diff].n}`, 240, 188, '#8fb6d4', 16, 'center');
-  if (t > 90 && e.kind !== 'dawn') T('※「話す」を3回以上選んで見逃すと、別の結末になります。', 240, 210, '#6f95b2', 16, 'center');
-  if (t > 200) T('Z：タイトルへ', 240, 248, '#ffe566', 16, 'center');
+  const line = e.kind === 'dawn' ? '42回目の夜は、二人で漕ぎ出して明けた。' : e.kind === 'calm' ? '潮は引いた。けれど、まだ話すことが残っている。' : '潮はすべてを飲み込んだ。次は、手を取ってあげて。';
+  if (t > 20) { T('THE END', 480, 200, '#f2fbff', 96, 'center', '#0b2a66'); T(names[e.kind], 480, 268, e.kind === 'sunk' ? '#8fa8ff' : '#ffe9a8', 32, 'center'); }
+  if (t > 60) T(line, 480, 324, '#cfe9ff', 32, 'center');
+  if (t > 90) T(`被弾 ${G.hits} 回 ／ ゲームオーバー ${G.deaths} 回 ／ ${DIFFS[G.diff].n}`, 480, 376, '#8fb6d4', 32, 'center');
+  if (t > 90 && e.kind !== 'dawn') T('※「話す」を3回以上選んで見逃すと、別の結末になります。', 480, 420, '#6f95b2', 32, 'center');
+  if (t > 200) T('Z：タイトルへ', 480, 496, '#ffe566', 32, 'center');
 }
 
 function render() {
   const sc = G.scene, t = G.t;
-  if (sc === 'end') { drawEndPx(); presentFrame(); return; }
-  drawBGpx(t, world.ecl);
-  drawBoatPx(); drawSansPx();
-  if (world.ecl > 0) shadeRect(0, 0, LW, 140, world.ecl * .38);
-  drawWaterPx();
-  if (world.dawn > 0) tintRect(0, 0, LW, 150, hex('#ff9a60'), world.dawn * .55);
-  if (sc === 'title') drawTitlePx(t);
-  else {
-    const showBox = G.hud || (Dlg.on && Dlg.mode === 'box');
-    if (showBox) { drawBoxPx(); if (wave.on && A && sc === 'attack') drawWavePx(); drawWaterLinePx(t); }
-    drawLanternsPx(); drawWellPx(); drawBulletsPx(); drawBeamsPx();
-    if (soul.shown && sc === 'attack') drawSoulPx();
-    for (const b of blasters) drawLunaPx(b);
-    drawParticlesPx();
-    if (showBox) drawBoxTextPx();
-    drawSlashPx();
-  }
-  applyVignette();
-  if (sc === 'dead') drawDeadPx();
-  if (sc !== 'title' && G.hud) drawHUDpx(sc !== 'menu');
-  if (Dlg.on && Dlg.mode === 'bubble') {
-    const h = drawBubblePx(Dlg.wl, Dlg.n, 296, 22);
-    if (Dlg.n >= Dlg.flat.length) T('▼', 300, 22 + h + 12, '#9fdcff');
-  } else if (mini.d > 0 && sc === 'attack') {
-    const lines = wrapLow(mini.s, 150), sh = Math.min(mini.s.length, (mini.t * .8) | 0);
-    if (mini.d - mini.t > 8) drawBubblePx(lines, sh, 296, 22);
-  }
-  if (sc === 'attack' && A && A.k === 5 && A.f > 0 && A.f < 130) T('LAST  TIDE', 240, 128, '#e8fbff', 48, 'center', '#1a4aa8');
-  if (sc === 'attack' && A && A.f > 0 && A.f < 90 && A.k < 5) T(['鏡面', '屈折', '波乗り', '灯蛾', '月食'][A.k], 240, 122, '#d9f3ff', 32, 'center', '#0b2a66');
-  if (world.flash > .02) { const f = world.flash; for (let i = 0; i < FB.length; i++) FB[i] = lighten(FB[i], Math.min(1, f)); }
-  if (world.red > .05) for (let i = 0; i < FB.length; i++) { if (dith(i % LW, (i / LW) | 0, world.red * .3)) { const c = FB[i]; FB[i] = packRGB(Math.min(255, (c & 255) + 90), ((c >> 8) & 255) >> 1, ((c >> 16) & 255) >> 1); } }
-  presentFrame();
-}
-function presentFrame() {
-  lc.putImageData(fbImg, 0, 0);
-  flushText();
-  if (world.fade > .02) { lc.fillStyle = `rgba(0,0,0,${Math.round(world.fade * 8) / 8})`; lc.fillRect(0, 0, LW, LH); }
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.imageSmoothingEnabled = false; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
-  const sx = Math.round((Math.random() - .5) * cam.shake), sy = Math.round((Math.random() - .5) * cam.shake), k = cv.width / LW;
-  ctx.drawImage(low, 0, 0, LW, LH, sx * k, sy * k, LW * k, LH * k);
+  begin(); rect(0, 0, W, H, '#000000');
+  if (sc === 'end') { drawEnd(); return; }
+  ctx.save(); ctx.translate(Math.round((Math.random() - .5) * cam.shake * 2), Math.round((Math.random() - .5) * cam.shake * 2));
+  drawBG(t, world.ecl); drawBoat(t); drawSans(t);
+  if (world.ecl > 0) rect(0, 0, W, 280, `rgba(0,2,12,${.32 * world.ecl})`);
+  drawWater(t);
+  if (world.dawn > 0) rect(0, 0, W, 300, `rgba(255,150,90,${.22 * world.dawn})`);
+  if (sc === 'title') { ctx.restore(); drawTitle(); return; }
+  const showBox = G.hud || (Dlg.on && Dlg.mode === 'box');
+  if (showBox) drawBox(t);
+  drawLanterns(t); drawWell(t); drawBullets(); drawBeams(t);
+  if (soul.shown && sc === 'attack') drawSoul(t);
+  for (const b of blasters) drawLuna(b);
+  drawParticles();
+  if (showBox) drawBoxText();
+  drawSlash();
+  ctx.restore();
+  if (sc === 'dead') drawDead();
+  if (G.hud) drawHUD(sc !== 'menu');
+  if (Dlg.on && Dlg.mode === 'bubble') { const h = drawBubble(Dlg.wl, Dlg.n, 592, 44); if (Dlg.n >= Dlg.flat.length) T('▼', 600, 44 + h + 28, '#9fdcff'); }
+  else if (mini.d > 0 && sc === 'attack' && mini.d - mini.t > 8) drawBubble(wrapLow(mini.s, 300), Math.min(mini.s.length, (mini.t * .8) | 0), 592, 44);
+  if (sc === 'attack' && A && A.k === 5 && A.f > 0 && A.f < 130) T('LAST  TIDE', 480, 256, '#e8fbff', 96, 'center', '#1a4aa8');
+  if (sc === 'attack' && A && A.f > 0 && A.f < 90 && A.k < 5) T(['鏡面', '屈折', '波乗り', '灯蛾', '月食'][A.k], 480, 244, '#d9f3ff', 64, 'center', '#0b2a66');
+  if (world.flash > .02) rect(0, 0, W, H, `rgba(255,255,255,${Math.min(1, world.flash)})`);
+  if (world.red > .05) rect(0, 0, W, H, `rgba(255,30,60,${world.red * .22})`);
+  if (world.fade > .01) rect(0, 0, W, H, `rgba(0,0,0,${world.fade})`);
 }
 
 /* ============================================================
@@ -1673,7 +1514,7 @@ function frame(now) {
 }
 G.scene = 'title'; world.fade = 0; SN.flame = .9; SN.mood = 'closed'; SN.x = 760;
 window.__T = { plat: [], segDist, beamSegs, testB, hitPoints, waveF, G, SN, box, soul, bul, blasters, world, water, well, lanterns, wave, cam, update, render, startAttack, startGame, openMenu, endSpare, endFight, die, runSeq, Dlg, get A() { return A; }, DIFFS, set DM(v) { DM = v; }, tw };
-(document.fonts && document.fonts.load ? Promise.race([document.fonts.load('16px DotGothic16'), new Promise(r => setTimeout(r, 1500))]) : Promise.resolve()).catch(() => { }).then(() => requestAnimationFrame(frame));
+(document.fonts && document.fonts.load ? Promise.race([document.fonts.load('32px DotGothic16'), new Promise(r => setTimeout(r, 1500))]) : Promise.resolve()).catch(() => { }).then(() => requestAnimationFrame(frame));
 </script>
 </body>
 </html>
