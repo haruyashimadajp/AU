@@ -1619,12 +1619,13 @@ function render() {
   if (world.dawn > 0) tintRect(0, 0, LW, 150, hex('#ff9a60'), world.dawn * .55);
   if (sc === 'title') drawTitlePx(t);
   else {
-    if (G.hud) { drawBoxPx(); if (wave.on && A && sc === 'attack') drawWavePx(); drawWaterLinePx(t); }
+    const showBox = G.hud || (Dlg.on && Dlg.mode === 'box');
+    if (showBox) { drawBoxPx(); if (wave.on && A && sc === 'attack') drawWavePx(); drawWaterLinePx(t); }
     drawLanternsPx(); drawWellPx(); drawBulletsPx(); drawBeamsPx();
     if (soul.shown && sc === 'attack') drawSoulPx();
     for (const b of blasters) drawLunaPx(b);
     drawParticlesPx();
-    if (G.hud) drawBoxTextPx();
+    if (showBox) drawBoxTextPx();
     drawSlashPx();
   }
   applyVignette();
